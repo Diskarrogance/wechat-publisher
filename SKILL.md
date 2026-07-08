@@ -407,8 +407,8 @@ python scripts/upload_article_image.py junxun img1.png img2.png img3.png
 **注意**：
 - 仅君寻账号需加，岚牧哒不加此二维码
 - 封面media_id入库后可复用，但二维码URL不变
-- 本地文件：`C:\Users\LMD\.qclaw\wechat-assets\君寻企业微信群二维码.jpg`
-- 微信永久素材 media_id：`DTu4zlZnETHW4SvORldxogMUkTK65GKunSk3V0CmcduFnWNdnMOHzvYzl-Y3_rF_`
+- 本地文件：`<your-local-path>/君寻企业微信群二维码.jpg`
+- 微信永久素材 media_id：`<!-- 请联系项目维护者获取 -->`
 
 ### 第九步：创建草稿
 

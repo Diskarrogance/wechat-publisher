@@ -48,3 +48,8 @@ scripts/build_draft*.py
 scripts/*.png
 scripts/tmp/
 scripts/tmp_*.py
+
+# 调试脚本（含历史敏感信息）
+scripts/fix_and_resend.py
+scripts/fix_draft1.py
+scripts/fix_draft1_v2.py
