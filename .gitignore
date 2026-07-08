@@ -1,0 +1,50 @@
+﻿# 凭证/密钥
+secure/
+.env
+.env_*
+config/accounts.yaml
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 临时文件
+temp/
+*.json
+*.png
+*.jpg
+*.jpeg
+cover_*.png
+img*.png
+
+# 系统文件
+Thumbs.db
+.DS_Store
+
+# 敏感配置（不含token）
+config/accounts.yaml
+# 工作目录垃圾文件
+article*.txt
+article*.html
+article*.md
+draft*.html
+build_*.py
+check_db.py
+null
+run_draft*.py
+save_draft*.py
+post_draft*.py
+gen_article*.py
+write_history.py
+# 历史遗留调试脚本
+scripts/_*
+scripts/create_new_drafts.py
+scripts/create_draft_lanmuda.py
+scripts/upload_all_images.py
+scripts/lanmuda_*.py
+scripts/build_article*.py
+scripts/build_draft*.py
+scripts/*.png
+scripts/tmp/
+scripts/tmp_*.py
