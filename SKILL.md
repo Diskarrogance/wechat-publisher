@@ -1,4 +1,4 @@
-# wechat-publisher v2.5.0
+# wechat-publisher v2.5.1
 
 > 微信公众号多账号自动发布系统 · 配置驱动版
 
@@ -137,7 +137,12 @@ while len(selected_articles) < target_count:
       # conn.close()
       # 第二层：本次已选中列表中排除
       # if url in used_urls: continue
-      
+
+      # 第三层（v2.5.1）：内容级去重
+      # 用改写后的标题（不是原标题）跑 content_dedup，防不同源同新闻
+      # python scripts/content_dedup.py <account_key> "<改写后的标题>"
+      # exit=1 (DUPLICATE) 则跳过
+
       3. 内容 ≥ 500 字才算有效
       4. 有效则加入 selected_articles，标记 used_urls，
          来源切换——第二篇尽量选不同来源/不同方向的文章
@@ -480,6 +485,7 @@ C:\Users\LMD\.qclaw\
 │       ├── upload_material.py   ← 上传图片（--permanent 永久素材 / --type image）
 │       ├── create_draft.py      ← 创建草稿（自动 token 重试）
 │       └── generate_cover.py    ← 生成封面（16:9，双链路）
+    ├── content_dedup.py      ← 内容级去重（4-gram Dice）
 ├── secure\
 │   ├── .env_junxun             ← 君寻凭证
 │   └── .env_lanmuda            ← 岚牧哒凭证
@@ -523,6 +529,18 @@ headers = {"Content-Type": "application/json; charset=utf-8"}
 data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 r = requests.post(url, data=data, headers=headers)
 ```
+
+---
+
+## v2.5.1 更新（2026-07-09）
+
+### 新增
+1. ✅ `content_dedup.py` — 内容级去重脚本，基于 4-gram Dice 系数
+2. ✅ 选文阶段增加内容级去重（第三层防重），防止不同源不同URL写同一件事
+
+### 修复
+3. ✅ `.in_progress` 锁机制修复 daily + retry cron 双跑 race condition
+4. ✅ semaphore_check 三层屏障：history.db → .in_progress → .done
 
 ---
 
