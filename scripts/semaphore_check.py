@@ -7,19 +7,26 @@ semaphore_check.py - 防重复硬屏障
 如果脚本返回非零 exit code，Agent 必须立即停止，不得继续。
 
 用法：
-  python semaphore_check.py <account_key> [--mode check | --create-done | --clear]
+  python semaphore_check.py <account_key> [--mode check | --create-done | --clear | --create-in-progress | --clear-in-progress]
 
 --check (默认): 检查今天是否已完成
   - 读 history.db → 今天有记录？ → exit 1 "HISTORY_EXISTS"
-  - 读 marker 文件 → 今天已完成？ → exit 1 "MARKER_EXISTS"
+  - 读 .done marker 文件 → 今天已完成？ → exit 1 "MARKER_EXISTS"
+  - 读 .in_progress marker → 今天有任务进行中？ → exit 1 "IN_PROGRESS"
   → exit 0 "READY"
 
 --create-done: 标记今天已完成
-  - 创建 marker 文件 → exit 0
+  - 创建 .done marker 文件 → exit 0
   - 由 create_draft.py 在创建草稿成功后调用
 
+--create-in-progress: 标记任务进行中（流程起点写入）
+  - 创建 .in_progress marker 文件 → exit 0
+
+--clear-in-progress: 清除进行中标记
+  - 删除 .in_progress marker 文件 → exit 0
+
 --clear: 清除今天的标记（用于手动重试）
-  - 删除 marker 文件 → exit 0
+  - 删除 .done 和 .in_progress marker 文件 → exit 0
 
 账号通过 accounts.yaml 的 key 字段匹配，自动读取 log_dir。
 """
@@ -47,9 +54,17 @@ def marker_dir(log_dir: str) -> str:
     return os.path.join(log_dir, ".done")
 
 
+def today_str() -> str:
+    return datetime.date.today().isoformat()
+
+
 def marker_file(log_dir: str) -> str:
-    today = datetime.date.today().isoformat()
-    return os.path.join(marker_dir(log_dir), today)
+    return os.path.join(marker_dir(log_dir), today_str())
+
+
+def in_progress_file(log_dir: str) -> str:
+    """进行中锁文件路径"""
+    return os.path.join(marker_dir(log_dir), today_str() + ".in_progress")
 
 
 def check_history(db_path: str) -> bool:
@@ -58,8 +73,7 @@ def check_history(db_path: str) -> bool:
     try:
         conn = sqlite3.connect(db_path)
         c = conn.cursor()
-        today = datetime.date.today().isoformat()
-        c.execute("SELECT COUNT(*) FROM history WHERE date = ?", (today,))
+        c.execute("SELECT COUNT(*) FROM history WHERE date = ?", (today_str(),))
         count = c.fetchone()[0]
         conn.close()
         return count > 0
@@ -69,26 +83,62 @@ def check_history(db_path: str) -> bool:
 
 
 def check_marker(log_dir: str) -> bool:
-    """检查 marker 文件是否存在"""
+    """检查 .done marker 文件是否存在"""
     return os.path.exists(marker_file(log_dir))
 
 
+def check_in_progress(log_dir: str) -> bool:
+    """检查 .in_progress 锁文件是否存在"""
+    ipf = in_progress_file(log_dir)
+    if not os.path.exists(ipf):
+        return False
+    # 锁文件超过 60 分钟视为过期（可能是异常退出遗留），允许重新执行
+    age = datetime.datetime.now().timestamp() - os.path.getmtime(ipf)
+    if age > 3600:
+        print(f"[WARN] Stale .in_progress ({int(age)}s old), ignoring", file=sys.stderr)
+        os.remove(ipf)
+        return False
+    return True
+
+
 def create_marker(log_dir: str):
-    """创建 marker 文件"""
+    """创建 .done marker 文件"""
     d = marker_dir(log_dir)
     os.makedirs(d, exist_ok=True)
     with open(marker_file(log_dir), "w") as f:
         f.write(f"done:{datetime.datetime.now().isoformat()}")
-    print(f"[SEMAPHORE] Marker created: {marker_file(log_dir)}")
+    print(f"[SEMAPHORE] .done Marker created: {marker_file(log_dir)}")
+
+
+def create_in_progress(log_dir: str):
+    """创建 .in_progress 锁文件（流程起点写入）"""
+    d = marker_dir(log_dir)
+    os.makedirs(d, exist_ok=True)
+    ipf = in_progress_file(log_dir)
+    with open(ipf, "w") as f:
+        f.write(f"in_progress:{datetime.datetime.now().isoformat()}")
+    print(f"[SEMAPHORE] .in_progress created: {ipf}")
+
+
+def clear_in_progress(log_dir: str):
+    """清除 .in_progress 锁文件"""
+    ipf = in_progress_file(log_dir)
+    if os.path.exists(ipf):
+        os.remove(ipf)
+        print(f"[SEMAPHORE] .in_progress cleared: {ipf}")
+    else:
+        print(f"[SEMAPHORE] No .in_progress to clear")
 
 
 def clear_marker(log_dir: str):
+    """清除今天所有标记（.done + .in_progress）"""
     mf = marker_file(log_dir)
     if os.path.exists(mf):
         os.remove(mf)
-        print(f"[SEMAPHORE] Marker cleared: {mf}")
+        print(f"[SEMAPHORE] .done Marker cleared: {mf}")
     else:
-        print(f"[SEMAPHORE] No marker to clear: {mf}")
+        print(f"[SEMAPHORE] No .done marker to clear")
+    clear_in_progress(log_dir)
 
 
 def main():
@@ -115,10 +165,20 @@ def main():
 
     if mode == "create-done":
         create_marker(log_dir)
+        # 创建 .done 时顺便清理 .in_progress
+        clear_in_progress(log_dir)
         sys.exit(0)
 
     if mode == "clear":
         clear_marker(log_dir)
+        sys.exit(0)
+
+    if mode == "create_in_progress" or mode == "create-in-progress":
+        create_in_progress(log_dir)
+        sys.exit(0)
+
+    if mode == "clear_in_progress" or mode == "clear-in-progress":
+        clear_in_progress(log_dir)
         sys.exit(0)
 
     # ── check mode ──
@@ -144,7 +204,12 @@ def main():
         print("ALREADY_DONE [history]")
         sys.exit(1)
 
-    # 检查 marker 文件
+    # 检查 .in_progress 锁文件（防止同一时间多 cron 并行跑）
+    if check_in_progress(log_dir):
+        print("ALREADY_DONE [in_progress]")
+        sys.exit(1)
+
+    # 检查 .done marker 文件
     if check_marker(log_dir):
         print("ALREADY_DONE [marker]")
         sys.exit(1)

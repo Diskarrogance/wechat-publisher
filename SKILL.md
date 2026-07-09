@@ -59,11 +59,28 @@ python scripts/semaphore_check.py <account_key> --check
 # exit 1 = ALREADY_DONE（今天已发过，立即停止）
 ```
 
-此脚本检查两层：
+此脚本检查三层：
 1. **history.db** — 看今天有没有 draft_created 记录
-2. **.done 目录 marker 文件** — create_draft.py 创建草稿后自动写 marker
+2. **.in_progress 锁文件** — 看今天是否有任务正在执行中（防止 daily 和 retry 并行双跑）
+3. **.done 目录 marker 文件** — create_draft.py 创建草稿后自动写 marker
 
-两层任意一个命中 → 阻塞通过。
+三层任意一个命中 → 阻塞通过。
+
+### 第〇步-加强：写入 .in_progress 锁（v2.5.1 新增）
+
+**semaphore_check --check 通过后，立即写入 .in_progress 锁**，防止 5 分钟后 retry cron 也启动导致双跑：
+
+```powershell
+# 先检查
+python scripts/semaphore_check.py <account_key> --check
+# exit 0 → 立即写锁
+python scripts/semaphore_check.py <account_key> --create-in-progress
+
+# ...执行完整流程（生图、上传、创建草稿）...
+# create_draft.py 成功后会调用 --create-done，自动清理 .in_progress
+```
+
+**.in_progress 过期策略**：锁文件超过 60 分钟自动视为过期（异常退出后不永久阻塞）。
 
 **特别注意**：
 - **君寻每天2篇**：semaphore_check 只是总开关（是否≥1篇），具体篇数仍需查 history.db 判断今天够不够

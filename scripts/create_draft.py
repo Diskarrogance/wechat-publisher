@@ -167,17 +167,17 @@ def main():
         media_id = create_draft(token, draft_info, proxy)
     except Exception as e:
         # 草稿创建失败 → 按 id 更新（不覆盖其他条）
-        c.execute('UPDATE history SET status=?, created_at=? WHERE id=?',
+        c.execute('UPDATE history SET status=?, created_at=? WHERE rowid=?',
                   ('create_failed', datetime.datetime.now().isoformat(), row_id))
         conn.commit()
         raise
 
     # 草稿创建成功 → 按 id 更新（不覆盖其他条的 draft_media_id）
-    c.execute('UPDATE history SET status=?, draft_media_id=?, created_at=? WHERE id=?',
+    c.execute('UPDATE history SET status=?, draft_media_id=?, created_at=? WHERE rowid=?',
               ('draft_created', media_id, ts, row_id))
     conn.commit()
 
-    # ★ 写 semaphore marker（防重复硬屏障）
+    # ★ 写 semaphore .done marker（防重复硬屏障），自动清理 .in_progress
     try:
         sem_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'semaphore_check.py')
         import subprocess
