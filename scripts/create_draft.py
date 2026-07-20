@@ -24,8 +24,9 @@ create_draft.py - 创建微信图文草稿
   - 自动重试获取 token（最多 3 次）
   - 自动处理编码（ensure_ascii=False）
 """
-import sys, io, os, json, requests, time, urllib3
+import sys, io, os, json, requests, time, urllib3, ssl, urllib.request
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# requests 仅用于 token 获取；创建草稿用 urllib（避免 Nginx 代理的 Content-Type/gzip 编码问题）
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
@@ -64,7 +65,7 @@ def get_token(app_id, app_secret, proxy, retries=3):
             raise Exception(f"Token error after {retries} attempts: {e}")
 
 def create_draft(token, draft_info, proxy):
-    """创建图文草稿"""
+    """创建图文草稿（使用 urllib 替代 requests，避免 Nginx 代理的 Latin-1 编码问题）"""
     url = f"{proxy}cgi-bin/draft/add?access_token={token}"
     
     payload = {
@@ -80,11 +81,18 @@ def create_draft(token, draft_info, proxy):
         }]
     }
     
-    headers = {"Content-Type": "application/json; charset=utf-8"}
+    # 🔥 使用 urllib 替代 requests 发送 POST
+    # requests 在通过 Nginx 代理（airzoneapi.lanmuda.net）时 Content-Type 被篡改，
+    # UTF-8 字节被当 Latin-1 存入微信服务器 → 中文正文变乱码（第三次复发）
+    # urllib 更底层，不进行编码猜测
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    r = requests.post(url, data=data, headers=headers, timeout=60, verify=False)
-    r.raise_for_status()
-    resp = r.json()
+    req = urllib.request.Request(url, data=data, method='POST')
+    req.add_header('Content-Type', 'application/json; charset=utf-8')
+    r = urllib.request.urlopen(req, context=ctx, timeout=60)
+    resp = json.loads(r.read().decode('utf-8'))
     if resp.get("errcode", 0) != 0:
         raise Exception(f"Draft failed: {resp}")
     return resp.get("media_id", "")
