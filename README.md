@@ -186,9 +186,48 @@ PowerShell 命令行传递中文 JSON → 自动转为 CP936 → Python 解码�
 
 ---
 
+## 防重复架构（三层屏障）
+
+系统采用三层防重复机制，由硬性屏障和软件规则组合保障：
+
+| 层级 | 机制 | 范围 | 说明 |
+|------|------|------|------|
+| 1️⃣ | **URL 去重**（check_duplicate.py） | 7 天 | 同一 URL 在同一公众号 history.db 中 7 天内禁止重复 |
+| 2️⃣ | **`.done` 标记 + `.in_progress` 流程锁**（semaphore_check.py） | 当天 | 硬性文件锁，cron 第〇步检查；`.done` 标记改为 `cleared:␣` 前缀写入保留历史，不再物理删除；`.in_progress` 锁超过 1 小时自动过期 |
+| 3️⃣ | **内容级去重**（content_dedup.py，v2.5.1） | 7 天 | 4-gram Dice 系数检测标题相似度，阈值 0.28，无需分词/停用词表 |
+| 4️⃣ | **主题聚类去重**（SKILL.md v2.10.0） | 当天 | 多候选项时用 TF-IDF 余弦相似度或 Jaccard 相似度（jieba 分词），cosine_similarity > 0.35 归并只留字数多的 1 篇 |
+
+---
+
+## 脚本功能索引
+
+| 脚本 | 功能 | 调用时机 |
+|------|------|----------|
+| `semaphore_check.py` | 防重复屏障/锁管理 | cron 第〇步 |
+| `generate_cover.py` | 腾讯混元生成封面 + 配图 | 写稿后 |
+| `upload_article_image.py` | 上传图片（`--type image` 正文配图 / `--type thumb` 封面） | 配图后 |
+| `create_draft.py` | 构建 HTML + 创建微信草稿（支持 `@file` 传参） | 排版后 |
+| `save_history.py` | 写入 history.db | 草稿创建后 |
+| `update_history.py` | 更新 history.db（如补充 cover_media_id） | 封面上传后 |
+| `content_dedup.py` | 内容级去重检查 | 选文时 |
+
+---
+
 ## Cron 集成
 
-支持配置为 cron 定时任务（sessionTarget: isolated），每个账号可独立设置每日篇数和发布时间。cron prompt 统一指向 SKILL.md 获取完整流程。
+支持配置为 cron 定时任务（`sessionTarget: isolated`），每个账号可独立设置每日篇数和发布时间。cron prompt 统一指向 `SKILL.md` 获取完整九步流程。
+
+典型 cron 配置（accounts.yaml 中）：
+
+```yaml
+schedule:
+  daily: "0 8 * * *"     # 主任务
+  retry: "5 8 * * *"      # 补发任务（比 daily 稍晚）
+articles_per_day: 2       # 每日篇数
+timeout:
+  daily: 1800
+  retry: 1200
+```
 
 ---
 

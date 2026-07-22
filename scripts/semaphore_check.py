@@ -83,8 +83,20 @@ def check_history(db_path: str) -> bool:
 
 
 def check_marker(log_dir: str) -> bool:
-    """检查 .done marker 文件是否存在"""
-    return os.path.exists(marker_file(log_dir))
+    """检查 .done marker 文件是否存在且状态为 done（非 cleared）"""
+    mf = marker_file(log_dir)
+    if not os.path.exists(mf):
+        return False
+    # 兼容旧格式（只有时间戳）和新格式（done: 前缀）
+    try:
+        with open(mf, 'r') as f:
+            first_line = f.readline().strip()
+        # 旧格式文件直接为 done 状态
+        if not first_line.startswith("cleared:"):
+            return True
+        return False
+    except Exception:
+        return os.path.exists(mf)
 
 
 def check_in_progress(log_dir: str) -> bool:
@@ -131,13 +143,15 @@ def clear_in_progress(log_dir: str):
 
 
 def clear_marker(log_dir: str):
-    """清除今天所有标记（.done + .in_progress）"""
+    """清除今天所有标记（.done + .in_progress）
+    注意：不清除文件，改为写 cleared: 标记保留历史记录"""
     mf = marker_file(log_dir)
-    if os.path.exists(mf):
-        os.remove(mf)
-        print(f"[SEMAPHORE] .done Marker cleared: {mf}")
-    else:
-        print(f"[SEMAPHORE] No .done marker to clear")
+    d = marker_dir(log_dir)
+    os.makedirs(d, exist_ok=True)
+    with open(mf, 'w') as f:
+        f.write(f"cleared:{datetime.datetime.now().isoformat()}\n")
+        f.write(f"# 原始标记于 {datetime.datetime.now().isoformat()} 被清除（手动重试）\n")
+    print(f"[SEMAPHORE] .done Marker marked as cleared (historic retained): {mf}")
     clear_in_progress(log_dir)
 
 
