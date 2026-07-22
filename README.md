@@ -33,8 +33,7 @@ wechat-publisher/
 │   ├── create_draft.py       ← 创建微信图文草稿
 │   ├── semaphore_check.py    ← 防重复硬屏障
 │   ├── generate_cover.py     ← 腾讯混元封面生成
-│   ├── upload_material.py    ← 上传素材（封面/永久素材）
-│   ├── upload_article_image.py ← 正文配图上传
+│   ├── upload_article_image.py   ← 上传图片（统一入口：--type image 正文配图 / --type thumb 封面）
 │   ├── save_history.py       ← 写入发布历史
 │   └── update_history.py     ← 更新历史记录
 ├── assets/                   ← 资源文件
