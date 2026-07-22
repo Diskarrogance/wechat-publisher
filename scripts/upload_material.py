@@ -36,12 +36,32 @@ def get_token(app_id, app_secret, proxy):
         raise Exception(f"Token failed: {data}")
     return data["access_token"]
 
-def upload_material_permanent(token, image_path, proxy, img_type="image"):
+def upload_image_for_article(token, image_path, proxy):
     """
-    上传永久素材（返回 URL）
-    接口：POST /cgi-bin/material/add_material
+    上传正文配图（使用 media/uploadimg，返回含 ?from=appmsg 的 URL）
+    接口：POST /cgi-bin/media/uploadimg
+    这是正文配图的正确接口，返回的 URL 带 from=appmsg 标记
     """
-    url = f"{proxy}cgi-bin/material/add_material?access_token={token}&type={img_type}"
+    url = f"{proxy}cgi-bin/media/uploadimg?access_token={token}"
+    with open(image_path, 'rb') as f:
+        files = {'media': (os.path.basename(image_path), f, 'image/png')}
+        r = requests.post(url, files=files, timeout=60, verify=False)
+    r.raise_for_status()
+    data = r.json()
+    if "url" not in data:
+        raise Exception(f"Upload failed: {data}")
+    # 返回格式与 upload_material_permanent 一致：(media_id, url)
+    # media/uploadimg 不返回 media_id，所以 media_id 置空
+    return "", data["url"]
+
+
+def upload_material_permanent(token, image_path, proxy):
+    """
+    上传永久素材（封面缩略图专用）
+    接口：POST /cgi-bin/material/add_material?type=thumb
+    ⚠️ 仅用于 --type thumb（封面缩略图），正文配图禁止使用此接口
+    """
+    url = f"{proxy}cgi-bin/material/add_material?access_token={token}&type=thumb"
     with open(image_path, 'rb') as f:
         files = {'media': (os.path.basename(image_path), f, 'image/png')}
         r = requests.post(url, files=files, timeout=60, verify=False)
@@ -102,23 +122,31 @@ def main():
     token = get_token(app_id, app_secret, proxy)
     print(f"Token OK: {token[:20]}...", file=sys.stderr)
 
-    # 微信接口 type 参数：图片用 image，缩略图用 thumb
-    # 注意：永久素材也支持 type=thumb（用于封面缩略图）
-    
+    # 🔥 接口分发规则（硬性）
+    # --type thumb    → material/add_material（封面缩略图专用）
+    # --type image    → media/uploadimg（正文配图专用），禁止使用 material/add_material
+    # --permanent     → 仅对 thumb 有效；image 类型不区分永久/临时，都走 media/uploadimg
+
     for path in args.images:
-        if args.permanent:
-            wx_type = "thumb" if args.type == "thumb" else "image"
-            media_id, url = upload_material_permanent(token, path, proxy, wx_type)
-            name = os.path.basename(path)
+        if args.type == "thumb":
+            # 封面缩略图：走 material/add_material?type=thumb
+            if args.permanent:
+                media_id, url = upload_material_permanent(token, path, proxy)
+            else:
+                media_id, url = upload_material_temp(token, path, proxy, "thumb")
+                url = None  # 临时素材不返回 URL
             if url:
                 print(f"{media_id}\t{url}")
             else:
                 print(media_id)
         else:
-            # 临时素材才支持 thumb 类型
-            wx_type = "thumb" if args.type == "thumb" else "image"
-            media_id, _ = upload_material_temp(token, path, proxy, wx_type)
-            print(media_id)
+            # 🔥 正文配图：强制走 media/uploadimg，返回含 from=appmsg 的 URL
+            # 禁止使用 material/add_material（返回的 URL 无此标记，微信不显示）
+            _, url = upload_image_for_article(token, path, proxy)
+            if url:
+                print(f"\t{url}")
+            else:
+                print("")
 
 if __name__ == '__main__':
     main()

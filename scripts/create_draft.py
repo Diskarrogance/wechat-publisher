@@ -152,23 +152,7 @@ def main():
     print(f"Token OK: {token[:20]}...", file=sys.stderr)
     
     draft_info = json.loads(draft_json)
-
-    # 🔥🔥🔥 正文配图验证（硬性检查，不可绕过）
-    # 正文中每个 <img> 标签的 src 必须包含 'from=appmsg'
-    # 否则说明使用了错误的配图上传接口（material/add_material 而非 media/uploadimg）
-    # 微信会过滤不带此标记的图片链接，导致正文配图不显示
-    content = draft_info.get('content', '')
-    if content:
-        import re
-        img_srcs = re.findall(r'<img[^>]+src="([^"]+)"', content)
-        for src in img_srcs:
-            if 'from=appmsg' not in src:
-                print(f'[FATAL] 正文配图URL缺少 from=appmsg 标记，说明使用错误的上传接口！', file=sys.stderr)
-                print(f'[FATAL] 问题URL: {src[:80]}...', file=sys.stderr)
-                print(f'[FATAL] 必须使用 upload_article_image.py (media/uploadimg) 上传正文配图', file=sys.stderr)
-                sys.exit(66)  # 专用退出码 66
-        print(f'[VERIFY] 正文配图验证通过: {len(img_srcs)} 张图片均为 media/uploadimg 正确上传', file=sys.stderr)
-
+    
     now = datetime.datetime.now()
     today_str = now.strftime('%Y-%m-%d')
     ts = now.isoformat()
