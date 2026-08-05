@@ -134,19 +134,14 @@ while len(selected_articles) < target_count:
       1. 跳过黑名单域名（global.blacklist）
       2. 用 web_fetch 抓取内容
 
-      # ⚠️ 选定文章前必做：双层防重
-      # import sqlite3, datetime
-      # db = 对应账号的 history.db 路径（accounts.yaml 中 history_db 字段）
-      # conn = sqlite3.connect(db)
-      # c = conn.cursor()
-      # today = datetime.date.today()
-      # seven_ago = (today - datetime.timedelta(days=7)).isoformat()
-      # url = 文章来源的完整 URL（不截断）
-      # 第一层：查 history.db 排除 7 天内已用过的 source_url
-      # c.execute('SELECT COUNT(*) FROM history WHERE source_url = ? AND date >= ?', (url, seven_ago))
-      # if c.fetchone()[0] > 0: continue
-      # conn.close()
-      # 第二层：本次已选中列表中排除
+      # ⚠️ 选定文章前必做：URL 硬性过滤（v2.10.1，代码强制，禁止跳过！）
+      # 搜索到候选文章后，先汇总成列表，一次性交给 filter_candidates.py 过滤：
+      #   python scripts/filter_candidates.py <account_key> "@候选列表.json"
+      # 候选列表 JSON 格式：[{"title":"...", "url":"...", "source":"..."}, ...]
+      # 脚本自动剔除 7 天内已发过的 URL（含 URL 规范化匹配），stdout 返回干净列表
+      # 只能在过滤后的列表里选文！不得绕开本脚本直接选择候选文章
+      # exit 0 = 正常（即使全被过滤），此时继续搜索新候选
+      # 第三层：本次已选中列表中排除
       # if url in used_urls: continue
 
       # 第三层（v2.5.1）：内容级去重
