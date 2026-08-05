@@ -1,4 +1,4 @@
-# wechat-publisher v2.10.0
+# wechat-publisher v2.10.1
 
 > 微信公众号多账号自动发布系统 · 配置驱动版
 

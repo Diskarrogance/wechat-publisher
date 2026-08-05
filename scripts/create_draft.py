@@ -138,6 +138,23 @@ def main():
         print("DUPLICATE_SKIP")
         sys.exit(0)
 
+    # 🔥 URL 级去重（v2.10.1）：查 history.db，7 天内同一 source_url 已发过则跳过
+    # 修复背景：同一源文 URL 被反复选中（煤球精灵 5 次、NFC芯片 3 次），
+    # 因为 URL 检查只存在于 SKILL.md 伪代码中，靠 agent 自觉执行不可靠
+    # 现在把 URL 去重做成脚本硬性检查，与今日篇数检查同级，无法绕过
+    try:
+        src_url_check = json.loads(draft_json).get('content_source_url', '') if draft_json else ''
+    except Exception:
+        src_url_check = ''
+    if src_url_check:
+        import datetime as _dt
+        seven_ago = (_dt.date.today() - _dt.timedelta(days=7)).isoformat()
+        c.execute('SELECT COUNT(*) FROM history WHERE source_url = ? AND date >= ?', (src_url_check, seven_ago))
+        url_count = c.fetchone()[0]
+        if url_count > 0:
+            print(f"URL_DUPLICATE_SKIP (source_url used {url_count} time(s) in last 7 days): {src_url_check}")
+            sys.exit(0)
+
     env = load_env(acct_cfg['env_file'])
     proxy = cfg['global']['proxy']
 
