@@ -18,12 +18,16 @@ temp/
 cover_*.png
 img*.png
 
+# 归档目录（历史临时脚本与素材，只归档不删除，不进版本控制）
+_archive/
+
 # 系统文件
 Thumbs.db
 .DS_Store
 
 # 敏感配置（不含token）
 config/accounts.yaml
+
 # 工作目录垃圾文件
 article*.txt
 article*.html
@@ -37,8 +41,10 @@ save_draft*.py
 post_draft*.py
 gen_article*.py
 write_history.py
-# 历史遗留调试脚本
+
+# 历史遗留调试脚本（注意：_rules.py 是内容安全词表唯一真源，必须跟踪，故排除在外）
 scripts/_*
+!scripts/_rules.py
 scripts/create_new_drafts.py
 scripts/create_draft_lanmuda.py
 scripts/upload_all_images.py

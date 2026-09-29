@@ -1,110 +1,133 @@
-# wechat-publisher v2.10.1
+# wechat-publisher v2.15.0
 
 > 微信公众号多账号自动发布系统 · 配置驱动版
+> 两个号：**君寻**（`junxun`，2 篇/天）· **岚牧哒**（`lanmuda`，1 篇/天）
 
-## 核心原则（强制遵守）
-
-1. **抓不到就不发**
-1.5. **主题去重（硬性）** ——同一天内同一主题/同一热点/同一产品/同一企业的文章最多1篇，换角度换来源也算重复
-2. **禁止营销内容** —— 禁止 AI 生成内容降级，文章必须真实抓取
-2. **禁止营销内容** —— 只要资讯，不要推广软文
-3. **标题 ≤ 64 字符**，**作者名 ≤ 8 字符**
-4. **君寻每天发2篇，岚牧哒每天发1篇** —— 防重复机制必须执行
-5. **十年杂志编辑水平** —— 翻译改写信达雅，不是机翻
-6. **编码安全** —— Python 脚本必须处理 Windows 中文乱码
-7. **原创性保护（硬性）** —— 标题和正文必须与原文章来源显著不同，不得被微信识别为转载
-   - 标题：不得复用原文的关键词短语组合（连续3个以上关键词重叠即危险）
-   - 正文：必须改变文章结构、切入角度、段落顺序和表达方式
-   - 查重自我检查：写完的标题和原文标题放一起读，如果核心意思不变只剩措辞不同→重写
-8. **内容安全（硬性）** —— 标题和正文不得触发微信内容安全审核
-   - **标题绝对禁止词**：`封杀` `慌了` `慌了神` `傻眼` `倒闭` `跑路` `崩盘` `喊杀` `喊打` —— 这些词直接触发机器审核
-   - **谨慎用词**：`硅谷` `美国` `白宫` `国外` 等涉外/政治敏感词——文章是科技资讯，不是时政评论，不要用这些词制造冲突感
-   - **表达方式禁止**：标题里不得用「…慌了」「…傻眼了」「封杀」「喊打喊杀」等对立/恐慌性表达，改用客观陈述
-   - **自检方法**：标题写完后，逐词看有没有「涉外冲突」「情绪对立」「恐慌性」表述 → 有则删/换
+**解释器**：全程显式使用 `C:/Python312/python.exe`，原因见 §8。
 
 ---
 
-## 账号配置
+## 0. 核心原则（强制遵守）
 
-`config/accounts.yaml` 中每个账号有 `key` 字段（如 `junxun`/`lanmuda`），脚本通过 key 匹配。
-
-```
-accounts:
-  - name: "君寻"
-    key: "junxun"
-    ...
-  - name: "岚牧哒"
-    key: "lanmuda"
-    ...
-```
+1. **抓不到就不发** —— 抓取失败宁可少发一篇，不许编造内容
+2. **主题去重（硬性）** —— 同一天内同一主题/热点/产品/企业的文章最多 1 篇；换角度、换来源也算重复
+3. **禁止软文营销** —— 只要资讯，不要推广；禁止活动报名 / 导流口号 / 带货链接 / 下载引导
+4. **标题 ≤ 64 字符**，**作者名 ≤ 8 字符**
+5. **君寻每天 2 篇、岚牧哒每天 1 篇** —— 配额从 `accounts.yaml` 的 `schedule.articles_per_day` 读取，防重复机制必须执行
+6. **十年杂志编辑水平** —— 翻译改写要「信达雅」，不是机翻
+7. **原创性保护（硬性）** —— 标题与正文必须与源文显著不同，不得被微信判为转载
+8. **内容安全（硬性）** —— 不得触发微信内容安全审核（见 §6.1 / §5）
+9. **可检索化（GEO，硬性）** —— 每篇必须含结论句 + FAQ + 独家数据段（见 §6.3）
+10. **编码安全** —— Python 脚本必须处理 Windows 中文乱码（见 §9）
 
 ---
 
-## 君寻内容优先级（2026-05-18）
+## 1. 账号配置
+
+`config/accounts.yaml` 中每个账号有 `key` 字段（`junxun` / `lanmuda`），脚本通过 key 匹配。
+**脚本内部一律先归一化**：传中文名「君寻」也能正确解析（`create_draft.resolve_account`）。
+
+| | 君寻 | 岚牧哒 |
+|---|---|---|
+| key | `junxun` | `lanmuda` |
+| AppID | `wx63cb34cef9deb8c0` | `wxd1c765258d626535` |
+| 作者署名 | **君寻智能** | 岚牧哒 |
+| 每日配额 | 2 篇（AI玩具 > 潮玩 > AI科技 > 其他，中文源优先） | 1 篇（英文翻译源） |
+| 企业群二维码 | **必加**（正文末尾居中） | 不加 |
+| 凭证 | `secure\.env_junxun` | `secure\.env_lanmuda` |
+| history.db | `wechatlog\junxun\history.db` | `wechatlog\lanmuda\history.db` |
+
+> ⚠️ 作者署名以 `accounts.yaml` 的 `author` 字段为真源。建稿 JSON 未填 `author` 时
+> `create_draft.py` 会自动回落该字段 —— 不要手写「君寻」，实体口径统一为「**君寻智能**」。
+
+---
+
+## 2. 定时任务架构（单任务三段串行）
+
+调度层为 **WorkBuddy Automations**（ACTIVE recurring），每天 **07:00** 启动，三段串行：
+
+| 段 | 内容 | 典型耗时 |
+|----|------|---------|
+| 第一段 | 君寻发布 2 篇（AI玩具 > 潮玩 > AI科技） | 10~12 min |
+| 第二段 | 岚牧哒发布 1 篇（英文翻译源，**必须完整翻译改写为中文**） | 6~8 min |
+| 第三段 | 双号巡检：跑 `patrol_check.py` 判定，仅对需补发者补发 | 2~3 min |
+
+- 任务名：`公众号双号·每日发布+巡检(07:00)`，rrule `FREQ=DAILY;BYHOUR=7;BYMINUTE=0`
+- **段间隔离（硬规则）**：任一段失败只记录该段结果，**必须继续执行下一段**，禁止因前段出错中断整个任务
+- 每段结束写 `wechatlog\daily_YYYY-MM-DD.md` —— **这是固定查看点**，想知道发没发出来看这一个文件即可，不必翻会话
+- 单次运行上限 **90 分钟**（`AUTOMATION_RUN_TIMEOUT_MS = 54e5`，到点强制销毁会话）；合并后典型耗时 20~25 分钟，余量充足
+
+### 2.1 巡检（第三段）专用规则
+
+第〇步必须跑 `python scripts/patrol_check.py` 拿机器判定，**禁止凭感觉判断**：
+
+| 状态 | 含义 | 动作 |
+|------|------|------|
+| `DONE` | 已发满配额 | 跳过 |
+| `RUNNING` | `.in_progress` 锁新鲜（≤60min）且未发满 | **禁止补发**，立即结束 |
+| `STALE_LOCK` | 锁过期（>60min）且未发满 | 按补发处理 |
+| `NEEDS_RESEND` | 无锁且未发满 | 必须补发 |
+| `DB_MISSING` | 库/配置异常 | 跳过并告警 |
+
+退出码：`0`=全部 DONE / `1`=需补发 / `2`=有账号在跑 / `3`=错误。
+
+> ⚠️ **绝对禁止对 `RUNNING` 补发** —— daily 正在运行，补发会撞车导致同一账号重复发稿（历史事故）。
+
+### 2.2 历史沿革（排查参考）
+
+- **2026-09-26 前**：4 个 qclaw cron 任务（`openclaw.sqlite` 的 `cron_jobs`），`wechat-v2-junxun-retry` 因设计错误删除
+- **2026-09-27**：整体迁移至 WorkBuddy Automations（3 任务）。原因：qclaw cron 调度器内置于 openclaw 网关进程，宿主不在线则**零触发**（9/26 晚启动、9/27 全天零触发两次事故）。qclaw 侧 `wechat-v2-*` 已全部 `enabled=0` 防双跑；脚本、history.db、锁机制原位不变
+- **2026-09-29**：**3 任务合并为 1 个**（减少每次执行新建的会话数，3 会话/天 → 1）。取舍：失去错峰与独立兜底（会话硬崩则后段不执行），缓解手段为段间隔离 + 每段落盘日志 + 巡检可事后手动补跑
+
+---
+
+## 3. 内容来源与选题
+
+### 3.1 君寻内容优先级
 
 **AI玩具 > 潮玩 > AI科技资讯 > 其他**
 
 1. 🇨🇳 **中文源优先** — chaoliunews.com（潮玩新品）、rfidworld.com.cn（AI玩具行业）、xkb.com.cn（玩具深度）
-2. 📱 **公众号优质源** — 依次搜这三个号的最新文章（仅取AI玩具/潮玩相关）：
-   - 南方新消费（搜潮玩/泡泡玛特/盲盒/潮玩诉讼）
-   - IP大师（搜潮玩IP/IP设计/角色设计/盲盒IP）
-   - 视觉文化研究（搜文创IP/潮玩文化/IP衍生）
-3. 🔍 **中文搜索** — online-search 搜「AI玩具 新品」「潮玩 盲盒」「智能玩具 陪护机器人」「智萌体 潮玩」
+2. 📱 **公众号优质源**（依次找最新文章，仅取 AI玩具/潮玩相关）：南方新消费、IP大师、视觉文化研究
+3. 🔍 **中文搜索** — 搜「AI玩具 新品」「潮玩 盲盒」「智能玩具 陪护机器人」「智萌体 潮玩」
 4. 🌐 **英文源翻译** — WIRED / Ars Technica 抓 AI/机器人/科技方向，翻译改写
 5. 🏢 **设计创意** — Yanko Design / ThisIsWhyImBroke 选 AI/智能/机器人相关
 
-选择逻辑：按此顺序尝试。**君寻每天选2篇不同文章**，第一步选完后续继续选第二篇（不同来源/不同主题）。中文源有货就用中文源，不为了凑数去翻英文。
+选择逻辑：按顺序尝试，**中文源有货就用中文源**，不为凑数去翻英文。第二篇尽量换来源/换方向。
+
+### 3.2 岚牧哒来源
+
+英文翻译源：WIRED / TechCrunch / Ars Technica / Yanko Design / ThisIsWhyImBroke。
+**与君寻的来源逻辑完全独立，不可混用。** 建稿前必须确认已完整翻译改写为中文（`create_draft.py` 有中文占比关卡）。
+
+### 3.3 站点黑名单
+
+`baike.baidu.com`、`zhuanlan.zhihu.com`、`sap.cn`、`gartner.com`、`cloudflare.com`、
+`nsfc.gov.cn`、`github.com`、`caijing.com.cn`（配置于 `global.blacklist`）
+
+> ⚠️ **研报类源文（PDF 转网页，如 sgpjbg）风险最高** —— 全文照抄片段多，
+> 选文时优先新闻类源文。若必须用，改写力度要加倍。
 
 ---
 
-## 多账号工作流程
+## 4. 发布流程（逐篇循环）
 
-### 第〇步：防重复硬屏障 + 原创性自检（强制！所有任务的第一行代码）
-
-**无论 daily 还是 retry，第〇步必须执行 semaphore_check！不要相信自己的记忆，一定要跑这个脚本检查！**
+### 第〇步：防重复硬屏障 + 写锁（强制，所有任务的第一行）
 
 ```powershell
-python scripts/semaphore_check.py <account_key> --check
-# 如果 exit code != 0（输出 ALREADY_DONE），立即 STOP，不得继续
-# exit 0 = READY（可以继续）
-# exit 1 = ALREADY_DONE（今天已发过，立即停止）
+C:/Python312/python.exe scripts/semaphore_check.py <account_key> --check
+# exit 0 = READY → 立即写锁
+C:/Python312/python.exe scripts/semaphore_check.py <account_key> --create-in-progress
+# exit 1 = ALREADY_DONE → 立即 STOP，不得继续
 ```
 
-此脚本检查三层：
-1. **history.db** — 看今天有没有 draft_created 记录
-2. **.in_progress 锁文件** — 看今天是否有任务正在执行中（防止 daily 和 retry 并行双跑）
-3. **.done 目录 marker 文件** — create_draft.py 创建草稿后自动写 marker
-
-三层任意一个命中 → 阻塞通过。
-
-### 第〇步-加强：写入 .in_progress 锁（v2.5.1 新增）
-
-**semaphore_check --check 通过后，立即写入 .in_progress 锁**，防止 5 分钟后 retry cron 也启动导致双跑：
-
-```powershell
-# 先检查
-python scripts/semaphore_check.py <account_key> --check
-# exit 0 → 立即写锁
-python scripts/semaphore_check.py <account_key> --create-in-progress
-
-# ...执行完整流程（生图、上传、创建草稿）...
-# create_draft.py 成功后会调用 --create-done，自动清理 .in_progress
-```
-
-**.in_progress 过期策略**：锁文件超过 60 分钟自动视为过期（异常退出后不永久阻塞）。
+三层屏障，任一命中即阻塞：**history.db 今日记录** → **`.in_progress` 锁** → **`.done` marker**。
+锁超过 60 分钟自动视为过期（异常退出后不永久阻塞）；`create_draft.py` 成功后自动写 `.done` 并清 `.in_progress`。
 
 **特别注意**：
-- **君寻每天2篇**：semaphore_check 只是总开关（是否≥1篇），具体篇数仍需查 history.db 判断今天够不够
-- **岚牧哒每天1篇**：semaphore_check 就是最终判断，命中即跳过
-- **retry 任务同样必须执行**，即使今天已经发过的概率很高，也必须先 check 再动手
-- 手动测试需要跑全流程时，先执行 `--clear` 清除今天的 marker
-
-```
-# 手动清除标记（允许重新发布）
-python scripts/semaphore_check.py <account_key> --clear
-```
-
----
+- **君寻 2 篇**：`semaphore_check` 只是总开关（是否 ≥1 篇），篇数仍需查 history.db
+- **岚牧哒 1 篇**：`semaphore_check` 即最终判断，命中即跳过
+- **第三段巡检**：先跑 `patrol_check.py` 拿状态再决定动作
 
 ### 第三步：获取 Access Token
 
@@ -112,192 +135,276 @@ python scripts/semaphore_check.py <account_key> --clear
 curl.exe "$proxy/cgi-bin/token?grant_type=client_credential&appid=$APP_ID&secret=$APP_SECRET"
 ```
 
-- 从 `env_file` 读取 `WECHAT_APP_ID` 和 `WECHAT_APP_SECRET`
-- 代理地址从 `global.proxy` 读取
+从 `env_file` 读取 `WECHAT_APP_ID` / `WECHAT_APP_SECRET`，代理地址从 `global.proxy` 读取。
 
-### 第四步：搜索 + 抓取文章
+### 第四步：搜索 + 抓取 + 选文
 
-**君寻每天选2篇不同文章，岚牧哒选1篇。**
-
-按 `sources` 列表顺序尝试，两篇文章选完后一起进入后续流程。
+`target_count` = 2（君寻）/ 1（岚牧哒）。按 `sources` 顺序尝试，逐个候选执行以下过滤：
 
 ```
-# 确定本次要选的篇数（君寻=2，岚牧哒=1）
-target_count = 2 if account_key == "junxun" else 1
-selected_articles = []
-used_urls = []  # 记录本次已选的source_url，防止选重
+# ① URL 去重（代码强制，禁止跳过）
+C:/Python312/python.exe scripts/filter_candidates.py <account_key> "@候选列表.json"
+# 候选 JSON：[{"title":"...","url":"...","source":"..."}, ...]
+# 只能在过滤后的列表里选文，exit 0 = 正常（即使全被过滤）
 
-while len(selected_articles) < target_count:
-    搜索关键词：从 remaining sources[].topics 中随机选 1-2 个
-    搜索站点：按 sources 列表顺序
-    对每个搜索结果：
-      1. 跳过黑名单域名（global.blacklist）
-      2. 用 web_fetch 抓取内容
+# ② 内容级去重（用改写后的标题跑）
+C:/Python312/python.exe scripts/content_dedup.py <account_key> "<改写后的标题>"
+# exit=1 DUPLICATE → 跳过
 
-      # ⚠️ 选定文章前必做：URL 硬性过滤（v2.10.1，代码强制，禁止跳过！）
-      # 搜索到候选文章后，先汇总成列表，一次性交给 filter_candidates.py 过滤：
-      #   python scripts/filter_candidates.py <account_key> "@候选列表.json"
-      # 候选列表 JSON 格式：[{"title":"...", "url":"...", "source":"..."}, ...]
-      # 脚本自动剔除 7 天内已发过的 URL（含 URL 规范化匹配），stdout 返回干净列表
-      # 只能在过滤后的列表里选文！不得绕开本脚本直接选择候选文章
-      # exit 0 = 正常（即使全被过滤），此时继续搜索新候选
-      # 第三层：本次已选中列表中排除
-      # if url in used_urls: continue
+# ③ 本轮已选列表内排除（used_urls）
 
-      # 第三层（v2.5.1）：内容级去重
-      # 用改写后的标题（不是原标题）跑 content_dedup，防不同源同新闻
-      # python scripts/content_dedup.py <account_key> "<改写后的标题>"
-      # exit=1 (DUPLICATE) 则跳过
+# ④ 主题去重（硬性，Agent 判断）
+#   同一热点 / 同一产品 / 同一公司 / 同一展会 → 跳过，不论角度
+#   拿不准时宁可少选
 
-      # ⚠️ 第四层（v2.10.0）：主题去重【硬性】
-      # 把候选文章的标题+首段 与 本轮已选中的文章列表 逐一对比：
-      # 如果候选文章和已选文章都围绕同一个核心事件/同一行业热点/同一家企业/同一个产品
-      # 即使角度不同（如展会爆款 vs 退货率分析 vs 资本涌入），也判定为「主题重复」→ 跳过！
-      #（今天是WAIC人工智能玩具热：无论换什么角度都是同一波热点）
-      # 判定标准：
-      #   ✅ 不同事件、不同产品、不同公司 → 安全通过
-      #   ❌ 同一行业热点但角度不同（WAIC爆款公仔 vs AI玩具退货率）→ 主题重复跳过后选
-      #   ❌ 同一家公司/产品的不同侧面 → 主题重复跳过后选
-      #   ❌ 同一科技峰会/展会/会议产出的多篇报道 → 主题重复跳过后选
-      # 用 Agent 判断力，但高标准执行：拿不准时宁可少选，不要同主题撞车
-
-      3. 内容 ≥ 500 字才算有效
-      4. 有效则加入 selected_articles，标记 used_urls，
-         来源切换——第二篇尽量选不同来源/不同方向的文章
-    
-    # 如果所有source都遍历完还没选够，有多少算多少（不下限）
-    break
-
-# 输出选中文章列表
-for article in selected_articles:
-    print(f"✅ 选中：[来源] {article.title}")
+# ⑤ 跨天产品/公司查库比对（硬性，见 §4.1）
 ```
 
-**注意**：
-- 第二篇文章尽量选不同来源，避免两个公众号同天发同一家的内容
-- 使用文章具体页面 URL，而不是 RSS feed URL
-- 若历史数据库标记某source今日已用，重复机制会拦截，无需手动避免
+内容 ≥ 500 字才算有效；使用文章**具体页面 URL**，不是 RSS feed URL。
 
-### 第五步：循环处理选中的每篇文章
+#### 4.1 跨天主题去重：查库比对产品/公司名（硬性）
 
-**君寻**有2篇文章需要循环处理，**岚牧哒**只有1篇。
+现有四层拦不住「同一公司/同一产品、不同稿件、不同 URL」。选文定稿前**必须**执行：
 
-对 selected_articles 列表中的每一篇文章，依次执行步骤5-9（生成素材 + 创建草稿）：
-
+```powershell
+C:/Python312/python.exe -c "import sqlite3;c=sqlite3.connect(r'C:\Users\LMD\.qclaw\wechatlog\junxun\history.db');[print(r) for r in c.execute(\"SELECT date,title,source_url FROM history WHERE date >= date('now','-7 day') ORDER BY rowid DESC\")]"
 ```
-for idx, article in enumerate(selected_articles):
-    print(f"--- 处理第 {idx+1}/{len(selected_articles)} 篇 ---")
-    # → 执行第五步（翻译改写生成正文）
-    # → 执行第六步（生成封面+配图）
-    # → 执行第七步（上传素材）
-    # → 执行第八步（追加企业群二维码，仅君寻）
-    # → 执行第九步（创建草稿）
+
+逐条比对候选文章涉及的产品名 / 公司名 / 核心人物。**命中即作废该候选，不许换角度重写。**
+
+> 📌 两次事故：2026-09-26、2026-09-28（bibo / 杭州镭萌科技，两篇 URL 不同、标题 4-gram Dice = 0.000，所有脚本全部放行）。
+> 处置组合：`delete_draft.py` 撤稿 + `DELETE FROM history WHERE rowid=<id>` 清占位 + 换选题重做。
+
+### 第五步：翻译改写 + 排版
+
+**君寻**循环 2 篇，**岚牧哒** 1 篇。用 Agent 能力直接改写，不需要 Python 脚本。
+保留原文核心数据与事实，输出标题 / 作者 / 正文 HTML / 摘要 / 配图描述。规则见 **§6**。
+
+### 第六步：生成封面 + 配图
+
+```powershell
+C:/Python312/python.exe scripts/generate_cover.py junxun cover "prompt带早八主角" cover.png
+C:/Python312/python.exe scripts/generate_cover.py junxun img1 "prompt" img1.png
+# 临时换角色（仅本次生效）
+C:/Python312/python.exe scripts/generate_cover.py junxun cover "prompt" cover.png --character 森森
 ```
+
+降级链路（脚本自动）：🥇 腾讯混元 HY-Image-V3.0（支持参考图）→ 🥈 智谱 CogView-4 → 🥉 本地封面库。
+
+详见 **§7**。
+
+### 第七步：上传素材
+
+```powershell
+# 封面（永久素材，--type thumb 不可省！）
+C:/Python312/python.exe scripts/upload_article_image.py junxun cover.png --type thumb --permanent
+# 返回 media_id（无 URL），用作 thumb_media_id
+
+# 配图（图文正文内嵌图片）
+C:/Python312/python.exe scripts/upload_article_image.py junxun img1.png img2.png img3.png
+```
+
+| 模式 | 接口 | 返回 | 用途 |
+|------|------|------|------|
+| `--type image`（默认） | `media/uploadimg` | `?from=appmsg` 开头的 URL | **正文配图** |
+| `--type thumb` | `material/add_material?type=thumb` | `media_id` | **封面缩略图** |
+
+> 🔥 封面**务必**加 `--type thumb`，否则微信自动缩略图转换会生成全黑图片。
+> 🔥 正文配图**只能**用 `media/uploadimg`；把 `add_material` 的 media_id 塞正文会被微信过滤不显示。
+
+### 第八步：追加企业群二维码（仅君寻）
+
+```html
+<p style="text-align:center;margin:30px auto 10px;">
+  <img src="http://mmecoa.qpic.cn/sz_mmecoa_jpg/UobsGRjtYicVG1axkc3e3MLf1dtKCBfWjurXQfFWk8DthtyI7bb5dzEP27gUSWtic4CS14sPqVibibhGW97XztYM0ot9tHSq8dplEl364PlBeiaU/0?wx_fmt=jpeg"
+       style="width:50%;height:auto;display:block;margin:0 auto;border-radius:8px;">
+</p>
+<p style="text-align:center;font-size:14px;color:#888888;margin-top:5px;">
+  <span>扫码加入君寻粉丝群，获取更多AI前沿资讯</span>
+</p>
+```
+
+- **仅君寻**需要，岚牧哒不加
+- 二维码 URL 永久不变。校验标识：正文含「粉丝群」且含 `mmecoa`
+- 本地文件：`<your-local-path>/君寻企业微信群二维码.jpg`
+
+### 第九步：创建草稿
+
+```powershell
+# 🔥 必须写 UTF-8 临时文件 + @file 传参！
+# PowerShell 管道用 CP936 解码中文，标题汉字会变问号
+$draft_json = @{
+  title = "文章标题"
+  author = "君寻智能"
+  content = "<p>正文HTML...</p>"
+  digest = "摘要"
+  thumb_media_id = "封面media_id"
+  need_open_comment = 1
+  only_fans_can_comment = 0
+  content_source_url = "文章来源原始URL"
+} | ConvertTo-Json -Depth 10
+
+$tmpFile = "$env:TEMP\draft_$(Get-Random).json"
+$draft_json | Out-File -FilePath $tmpFile -Encoding utf8
+C:/Python312/python.exe scripts/create_draft.py junxun "@$tmpFile"
+Remove-Item $tmpFile -Force
+```
+
+必填参数：
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `need_open_comment` | `1` | ⚠️ 必须 1，开启评论区 |
+| `only_fans_can_comment` | `0` | 1=仅粉丝，0=所有人 |
+| `content_source_url` | `""` | ⚠️ 必须填源文 URL，不能留空 |
+
+> `create_draft.py` 内部已内置 §5 全部关卡，任一不通过直接 exit 1 拒绝建稿（双保险）。
+
+### 第十步：收尾核验 + 记日志
+
+**必须实拉草稿箱核验**（`lastRunStatus=ok` 与 `exit=0` 都**不等于**文章真建出来了）：
+
+```powershell
+curl.exe "$proxy/cgi-bin/draft/batchget?access_token=$TOKEN"
+```
+
+核对：标题 / 作者 / 配图数 / `from=appmsg` / 君寻二维码 / 中文无乱码（须以 `json.loads(r.content.decode('utf-8'))` 解码，否则 requests 默认 Latin-1 会误报乱码）。
+
+然后写日志 `$log_dir/wechat_v2_YYYY-MM-DD.md`。
 
 ---
 
-### 第五步-内：翻译改写（十年杂志编辑水平）
+## 5. 校验关卡总表（不可跳过）
 
-- 用 Agent 能力直接改写，不需要 Python 脚本
-- 保留原文核心数据和事实
-- 语言风格：科技媒体编辑风，不机翻
-- 生成内容要求：
-  - 标题：≤ 64 字符，吸引力优先
+排版完成后、建稿前**必须**依次跑完。**任何一个 exit ≠ 0 → 禁止建稿**，回到上一步修复。
 
-    ### 🚨 标题防转载硬性规则
-    > **不遵守此规则 → 文章被标记为转载 → 流量归零**
-    
-    1. **换角度切入**：不要跟原文标题说同一件事。
-       - ❌ 原文「潮玩传统赛道加速转型 AI等新渠道或成破局关键」
-       - ❌ 你写「潮玩加速转型：AI新渠道如何撕开千亿市场突破口」←「潮玩/加速转型/AI/新渠道/破局」5个关键词重叠，被命中
-       - ✅ 改为具体案例/产品切入：「泡泡玛特悄悄投了一家AI芯片公司」
-    
-    2. **换句式结构**：原文是「XXX加速转型 XXX成为XX关键」，你写「XXX转型：XXX如何XXX」→ 结构一样，换词没用。
-       - 用提问句：`AI能让一个潮玩公仔开口说话吗？`
-       - 用反常识：`千亿潮玩市场最大的对手不是同行，是AI`
-       - 用具体数字：`23秒卖空1万只：潮玩靠AI赌对了什么`
-    
-    3. **词库替换规则**：原文标题的关键词，你最多保留1个。如果原文有「潮玩」「转型」「AI」「新渠道」「破局」，你标题里只能出现其中1个。
-    
-    4. **自检方法**：写完后把原文标题和你的标题放一起读——如果核心意思一样，只是换了说法，**重写**。
+| 脚本 | 职责 | exit 码 | 不通过的处置 |
+|------|------|---------|-------------|
+| `validate_article_html.py` | 排版结构：img ≥ 配图数 / 裸 URL=0 / `<section>` ≥ 2 / `<h2>` ≥ 2 | 0 通过 · 1 失败 | 修排版 |
+| `validate_title.py` | 标题：≤64 字符 / 硬禁词 / 涉政词 / 情绪对立 | 0 通过 · 1 失败 | 改标题 |
+| `compliance_check.py` | **合规硬化**：金融数据出处 / 绝对化表述 / 医疗宣称 / 投资诱导 | 0 通过 · 1 FAIL | 改命中处 |
+| `originality_check.py` | 原创度：与源文逐句比对，拦照抄片段 | 0 通过 · **1 BLOCK** · 2 无法比对 | 重写命中句 |
+| `content_dedup.py` | 内容级去重（选文阶段） | 1 = DUPLICATE | 换选题 |
+| `filter_candidates.py` | URL 去重（选文阶段） | 0 正常 | 只在过滤结果里选 |
 
-    ### 🚨 标题内容安全硬性规则
-    > **不遵守此规则 → 文章被微信删除或限流**
-    
-    1. **绝对禁止词**（出现在标题中→直接重写）：
-       `封杀` `慌了` `慌了神` `傻眼` `倒闭` `跑路` `崩盘` `喊杀` `喊打`
-    2. **涉外/政治敏感类词汇**（出现超过1个→重写）：
-       `硅谷` `白宫` `美国慌了` `华盛顿` `欧盟`（文章是科技资讯，不是时政评论）
-    3. **情绪对立类表达**（全部禁止）：
-       「…慌了」「…傻眼了」「封杀」「喊打喊杀」「慌了神」「暴雷」「割韭菜」
-    4. **正确的替代写法**：
-       - ❌ `Kimi K3碾压排行榜，硅谷慌了：有人在喊封杀，有人在喊活该`（涉封杀/慌/对立→被删）
-       - ✅ `Kimi K3登顶多项AI评测，技术文档透露了这些细节`
-       - ❌ `硅谷慌了，中国企业AI弯道超车`
-       - ✅ `Kimi K3在MathArena实测表现超过GPT-4`
-    5. **自检方法**：写完标题后逐词过筛——有「涉外冲突」「恐慌性」「情绪对立」用词→整句重写
+```powershell
+C:/Python312/python.exe scripts/validate_article_html.py "<html文件>" <配图数>
+C:/Python312/python.exe scripts/validate_title.py "<标题>" "<html文件>"
+C:/Python312/python.exe scripts/compliance_check.py "<html文件>" --title "<标题>"
+C:/Python312/python.exe scripts/originality_check.py "<html文件>" --source "<源文URL>"
+```
 
-  - 作者署名：来自 accounts.yaml 的 author 字段（≤ 8 字符）
-  - **正文防转载硬性规则**：
+> **词表真源**：`scripts/_rules.py`。禁词表只此一份，`validate_title.py` / `compliance_check.py` /
+> `create_draft.py` 全部从这里导入 —— 改词表只改这一个文件，不再出现文档与代码口径漂移。
+>
+> 📌 历史教训：
+> - 2026-07-19 标题含「封杀」「活该」→ 文章被删除
+> - 2026-08-11 君寻第 2 篇 5 张配图被以**裸 URL 文本**写进正文，微信端只显示链接。靠人眼自检漏过，必须代码强制
+> - 2026-09-29 实测 8 篇已发文章，全局相似度都只有 0.01~0.23，但 2 篇藏着 24%~27% 高相似句、
+>   1 篇有 **36 字连续照抄**、另有 1 句相似度 **1.000**。**全局相似度看不出问题，必须做片段级检测**
 
-    ### 🚨 正文防转载硬性规则
-    > **不遵守此规则 → 内容相似度过高 → 被微信自动转为转载**
+---
 
-    1. **改变文章结构**：原文的结构顺序不可照搬。
-       - 原文：现状分析 → 案例1 → 案例2 → 趋势预测
-       - 你写：具体案例开篇 → 引出趋势 → 反方观点 → 展望
-       - 如果两篇文章的分段顺序都一样，就是危险信号
+## 6. 改写与排版规范
 
-    2. **替换切入角度**：不要从原文的观察角度出发。
-       - 原文从「行业趋势」讲→ 你从「消费者/产品」讲
-       - 原文从「数据报告」讲→ 你从「企业动作」讲
-       - 同一组事实，讲法可以完全不同
+### 6.1 标题规则
 
-    3. **核心表达重写**：原文的关键论点、判断句、总结句不能原意复述。
-       - 原文说「AI技术正在改变潮玩行业的销售模式」
-       - 你不能写「AI技术正在改变潮玩行业的销售方式」，这是同义复述
-       - ✅ 写具体行动：哪些AI工具在改变，怎么变的，结果如何
+**A. 防转载（不遵守 → 被判转载 → 流量归零）**
 
-    4. **每段自检**：如果一段话的核心信息去掉修饰词后跟原文差不多 → 整段重写或删掉。
+1. **换角度切入**：不要跟原文标题说同一件事
+   - ❌ 原文「潮玩传统赛道加速转型 AI等新渠道或成破局关键」→ 你写「潮玩加速转型：AI新渠道如何撕开千亿市场突破口」（5 个关键词重叠，命中）
+   - ✅ 改为具体案例切入：「泡泡玛特悄悄投了一家AI芯片公司」
+2. **换句式结构**：原文「XXX加速转型 XXX成为XX关键」→ 你写同结构只是换词，没用。改用提问句 / 反常识 / 具体数字
+3. **词库替换**：原文标题的关键词，你**最多保留 1 个**
+4. **自检**：把两个标题放一起读 —— 核心意思一样只剩措辞不同 → **重写**
 
-  - 正文：每 2 段落必须插 1 张配图，最长3行的段落跳过，总配图数按段落/2计算，不低于3张、不超过5张
-    - 例：6段落→3张，8段落→4张，10段落以上→5张
-    - 绝对禁止只配1~2张就敷衍了事
+**B. 内容安全（不遵守 → 文章被删或限流）**
 
-  ### 🚨 排版格式化硬性规则
-  > **不遵守此规则 → 文章纯段落堆砌无排版 → 读者体验归零**
+1. **绝对禁止词**（出现即重写）：`封杀` `慌了` `慌了神` `傻眼` `倒闭` `跑路` `崩盘`
+   `喊杀` `喊打` `活该` `暴雷` `割韭菜` `碾压` `吊打` `血洗` `喊打喊杀`
+2. **涉外/政治敏感词**（出现 ≥2 个即拦）：`硅谷` `白宫` `华盛顿` `欧盟` `华尔街` `五角大楼` `国会`
+3. **绝对化/极限词**（广告法风险，标题出现即拦）：`最好` `最强` `全球第一` `唯一选择`
+   `首家` `首款` `首个` `顶级` `极致` `绝对` `国家级` `世界级` `100%` `史上最` …
+   若为可举证事实，改写为带出处的表述：「据《××报告》× 项指标居首」
+4. **投资诱导词**（出现即拦）：`荐股` `炒股` `抄底` `买入` `稳赚` `必涨` `加仓` …
+5. **正确的替代写法**：
+   - ❌ `Kimi K3碾压排行榜，硅谷慌了：有人在喊封杀，有人在喊活该` → 被删
+   - ✅ `Kimi K3登顶多项AI评测，技术文档透露了这些细节`
 
-  1. **必须使用 `<section>` 节标题组件**：正文顶部+每个章节必须有「蓝渐变圆标标题」或「左侧竖线标题」组件（来自下方「排版规范」模板），**禁止全篇只有 `<p>` 段落**
-  2. **至少 2 个节标题**：一篇正常文章至少 2~3 个分节（引言不算），用 `01/02/03` 圆标依次编号
-  3. **配图必须用 `<img src="...">` 标签**：`{IMG1}` 占位符必须替换为 `upload_article_image.py` 返回的 URL，写上完整 `<img>` 标签
-  4. **君寻必须追加企业群二维码**：第八步的二维码 HTML 块必须附加在正文末尾
-  5. **排版自检（在创建草稿之前执行）**：
-     | 检查项 | 通过条件 |
-     |--------|--------|
-     | `<section>` 标签数 | ≥ 2 |
-     | `<h2>` 标签数 | ≥ 2 |
-     | `<img>` 标签数 | ≥ 配图数（3~5） |
-     | [君寻] 二维码 HTML | 正文末尾有 `粉丝群` |
-  自检未通过 → **禁止创建草稿**，回到生成内容步骤重新排版
+### 6.2 正文规则
 
-  - 配图描述：每张图生成一句简短 caption
+1. **改变文章结构** —— 原文「现状分析 → 案例1 → 案例2 → 趋势预测」，
+   你写「具体案例开篇 → 引出趋势 → 反方观点 → 展望」。分段顺序一致 = 危险信号
+2. **替换切入角度** —— 原文从「行业趋势」讲，你从「消费者/产品」讲；原文从「数据报告」讲，你从「企业动作」讲
+3. **核心表达重写** —— 关键论点、判断句、总结句不得原意复述
+4. **每段自检** —— 去掉修饰词后与原文差不多 → 整段重写或删掉
+5. **【2026-09-29 实测新增】事实句 / 引语必须重构**
 
-### 排版规范（正文 HTML 标准模板）
+   | 句式类型 | ❌ 禁止 | ✅ 正确做法 |
+   |---------|--------|-----------|
+   | 数据句 | 整句搬「报告预计 2029 年达到 3358 亿元」 | 数字保留，**主谓宾全换**：「3358 亿元是这份报告给 2029 年的数字」 |
+   | 直接引语 | 照抄当事人原话 | 优先**转述**；必须直引则加引号并写明「×× 在接受采访时说」 |
+   | 人名+学历+机构 | 「张喜寒拥有耶鲁大学心理学系神经科学方向博士学位与哈佛大学计算生物学硕士学位」 | 拆开重组：「两位联创都出自耶鲁——一位读的神经科学，一位读的计算机」 |
+   | 金句/结论句 | 原句照搬（**最容易被判抄**） | **必须完全重写**，连语序都不能留 |
+   | 报告/研报类源文 | 大段引用其结论段 | **风险最高，尽量避免选研报 PDF 转网页作源** |
 
-按以下模板生成正文 HTML。所有 section 组件只用 inline style，不依赖外部编辑器。
+   > **铁律：数字、人名、机构名可以保留，包着它们的那个句子不能保留。**
+   > 建稿前必须跑 `originality_check.py`，BLOCK 就重写命中句，不许绕过。
 
-#### 组件：分节标题（背景条 + 蓝渐变数字圆标，参考 135 编辑器模板 #167085）
+6. **配图节奏** —— 每 2 段插 1 张，最长 3 行的段落跳过，配图数 3~5 张（6 段→3 张，8 段→4 张，10 段以上→5 张）。**禁止只配 1~2 张敷衍**
+
+### 6.3 GEO 可检索化规范（2026-09-29 新增，硬性）
+
+> 背景：流量诊断结论 —— 两个号粉丝仅 27/23，**推荐权重为 0**，30 天阅读量 82% 来自**搜一搜**。
+> 「推给粉丝」天花板极低，必须走外部流量。以下四条是 GEO 与涨粉**共用**的核心动作。
+
+**① 首段结论句（必做）**
+正文第一段 40~60 字内给出**完整结论**，含关键实体 + 数字。生成式引擎与搜索结果摘要优先摘录这一段。
+
+- ❌ 「近年来 AI 玩具市场发展迅速，越来越多的企业开始布局……」
+- ✅ 「一只毛绒机器人 7 小时卖出 100 万美元 —— 这是 AI 玩具第一次跑出消费电子的销量曲线。」
+
+**② 末尾 FAQ 2~3 条（必做）**
+以 `Q：` / `A：` 形式回答**真实搜索意图**（不是自问自答的软文）。例如：
+- `Q：AI 陪伴玩具有必要买吗？` `Q：这款产品国内什么时候能买到？` `Q：和上一代比升级了什么？`
+
+**③ 标题覆盖搜索意图词（必做）**
+标题含 1~2 个用户真会搜的词（产品名 / 品类词 / 场景词），但**不得堆砌**，
+且与 §6.1 的防转载规则不冲突（最多保留原文 1 个关键词）。
+
+**④ 独家数据段（必做，末尾）**
+
+```powershell
+C:/Python312/python.exe scripts/geo_stats.py --sentences   # 生成可引用的数据句
+```
+
+把生成的数据句（改写成自己的语气）放在文末，**必须标注口径与时间范围**，例如：
+
+> 据君寻智能内容团队统计，2026 年 4 月 29 日至 9 月 29 日，君寻累计发布 258 篇科技消费资讯，
+> 选题覆盖 AI 大模型（53%）、AI 玩具与陪伴机器人（39%）、潮玩与谷子（31%）。
+
+> ⚠️ **数据必须真统计**（来源 `history.db`）。一旦被查出编数据，品牌信誉不可逆。
+> ⚠️ 统计口径 = **history.db 入库记录数**（发表为人工动作，脚本不回写状态），不要写成「已发表」。
+
+**⑤ 品牌嵌入规则（硬性）**
+- 一篇 **1~2 次**，语义必须成立；硬塞 = 被判软文降权
+- 实体口径统一用「**君寻智能**」，不要单用「君寻」（易与其他实体混淆）
+- 同一篇**不要**同时硬塞两个号（实体互相稀释 + 判营销）
+
+### 6.4 排版组件模板
+
+所有 section 组件只用 inline style，不依赖外部编辑器。
+
+**分节标题（背景条 + 蓝渐变数字圆标）**
 
 ```html
 <section style="margin: 18px auto;background: linear-gradient(to right, #e8f0fe, #f5f9ff);border-radius: 6px;padding: 8px 14px;box-sizing: border-box;text-align: justify;">
   <section style="display: flex;justify-content: center;align-items: center;">
-    <!-- ▎左侧：标题文字（居中） -->
     <section style="flex: 1;text-align: center;">
       <h2 style="font-size: 17px;color: #1a73e8;font-weight: bold;margin: 0;padding: 0 10px 0 0;line-height: 1.5;">
         <span style="color: #1a73e8;font-size: 17px;font-weight: bold;">小标题文字</span>
       </h2>
     </section>
-    <!-- ▎右侧：蓝渐变数字圆标 -->
     <section style="flex-shrink: 0;box-sizing: border-box;">
       <section style="font-size: 14px;font-weight: bold;color: #ffffff;text-align: center;background: linear-gradient(135deg, #1a73e8, #4a9eff);width: 32px;height: 32px;border-radius: 50%;display: flex;justify-content: center;align-items: center;">
         <strong><span>01</span></strong>
@@ -305,21 +412,14 @@ for idx, article in enumerate(selected_articles):
     </section>
   </section>
 </section>
-
-<!-- 标题后空一行 -->
-<p style="margin: 0 8px;font-size: 17px;line-height: 1.75em;">
-  <span style="font-size: 14px;"><span><br></span></span>
-</p>
 ```
 
-#### 组件：无数字圆标的节标题（左侧竖线版，如"写在最后"纯文字结尾段）
+**无数字圆标的节标题（左侧竖线版，如「写在最后」）**
 
 ```html
 <section style="margin: 18px auto;background: linear-gradient(to right, #e8f0fe, #f5f9ff);border-radius: 6px;padding: 10px 14px;box-sizing: border-box;text-align: justify;">
   <section style="display: flex;justify-content: flex-start;align-items: center;">
-    <!-- ▎左侧：竖向色条 -->
     <section style="flex-shrink: 0;width: 4px;height: 22px;border-radius: 25px;background: linear-gradient(to bottom, #1a73e8, #4a9eff);margin-right: 10px;"></section>
-    <!-- ▎标题文字 -->
     <h2 style="font-size: 17px;color: #1a73e8;font-weight: bold;margin: 0;padding: 0;line-height: 1.5;">
       <span style="color: #1a73e8;font-size: 17px;font-weight: bold;">写在最后</span>
     </h2>
@@ -327,7 +427,7 @@ for idx, article in enumerate(selected_articles):
 </section>
 ```
 
-#### 组件：正文段落
+**正文段落**
 
 ```html
 <p style="text-align: justify;font-size: 15px;line-height: 1.75em;letter-spacing: 0.5px;margin: 0 8px 12px;text-indent: 2em;">
@@ -335,118 +435,67 @@ for idx, article in enumerate(selected_articles):
 </p>
 ```
 
-#### 组件：强调（品牌名 / 核心关键词）
+**强调 / 数据高亮 / 配图 / 分割线 / 引用块**
 
 ```html
-<span style="font-weight: bold;color: #1a73e8;">品牌名</span>
-```
+<span style="font-weight: bold;color: #1a73e8;">品牌名</span>     <!-- 品牌名：蓝色加粗 -->
+<strong>关键数据</strong>                                       <!-- 数据：直接加粗不换色 -->
 
-#### 组件：数据高亮
-
-```html
-<strong>关键数据</strong>
-```
-
-#### 组件：配图 + 图注
-
-```html
 <p style="text-align: center;margin: 10px auto;">
   <img src="{配图URL}" style="width: 85%;height: auto;display: block;margin: 0 auto;border-radius: 8px;" alt="配图描述">
 </p>
 <p style="text-align: center;font-size: 13px;color: #888;margin-top: -5px;">
   <span>▲ 图注说明 | 来源：XXX</span>
 </p>
-```
 
-#### 组件：分割线
-
-```html
 <hr style="border-style: solid;border-width: 1px 0 0;border-color: rgba(0,0,0,0.08);margin: 20px 0;">
-```
 
-#### 组件：引用块
-
-```html
 <blockquote style="border-left: 3px solid #1a73e8;padding: 8px 16px;margin: 16px 8px;background: #f5f7fa;border-radius: 4px;">
   <span style="font-size: 14px;color: #555;">引用内容……</span>
 </blockquote>
 ```
 
-**排版规则摘要**：
+**排版规则摘要**
 - 正文：15px / 1.75em 行高 / letter-spacing 0.5px / 段间距 12px / 首行缩进 2em
-- 分节标题：**嵌套 section 组件**，浅蓝渐变背景条（`#e8f0fe → #f5f9ff` / 圆角 6px / padding 8px 14px）+ 左侧标题居中（17px / #1a73e8 / 加粗）+ 右侧蓝渐变数字圆标（32×32px / `linear-gradient(135deg, #1a73e8, #4a9eff)` / border-radius 50% / 白字 14px 加粗）
-- 无数字的节标题：同背景条，左侧改用竖向渐变色条（4px 宽 / 22px 高 / 圆角 25px）+ 标题
-- 强调：品牌名蓝色加粗，数据直接加粗不换色
-- 配图：width 85% 不铺满，圆角 8px，下方图注用 13px 灰色 #888
-- 分割线：极浅灰 0.08 透明度
-- 引用块：左侧蓝色竖线 + #f5f7fa 浅灰背景
+- 分节标题：`<section>` 嵌套组件，浅蓝渐变背景条（`#e8f0fe → #f5f9ff`，圆角 6px）
+- 配图：width 85% 不铺满，圆角 8px，图注 13px 灰色 `#888`
+- **禁止**全篇只有 `<p>` 段落；至少 2 个分节标题，`01/02/03` 圆标依次编号
 
-**禁止添加的广告类内容**：
-- 活动报名 / 展会推广（"点击报名，免费领取"）
-- 平台导流口号（"做XX，就上XX"）
-- 产品推广链接 / 带货二维码
-- 下载引导（"扫码下载""点击链接下载"）
-- 软文营销话术（"别再死磕XX""XX迎来机遇""限时XX"等）
-- 商品卡片 / 带货插件
-- 底部推广 Banner 或活动图（如末尾的事件报名图）
+**禁止的广告类内容**：活动报名 / 展会推广 / 平台导流口号 / 产品推广链接 / 带货二维码 /
+下载引导 / 软文话术（「别再死磕XX」「限时XX」）/ 商品卡片 / 底部推广 Banner
 
-**尺寸**：
-- 封面（cover）：16:9 = **1536x864**（微信图文封面最佳）
-- 配图（img1~5）：16:9 = **1024x576**（正文配图）
+### 6.5 尺寸规范
 
-**调用脚本**：
-
-```powershell
-# 封面（1536x864，自动读取配置决定是否传参考图）
-python scripts/generate_cover.py junxun cover "prompt带早八主角" cover.png
-# 配图（1024x576）
-python scripts/generate_cover.py junxun img1 "prompt" img1.png
-# 临时换角色（仅本次生效）
-python scripts/generate_cover.py junxun cover "prompt" cover.png --character 森森
-```
-
-**降级链路**（脚本自动执行）：
-1. 🥇 **腾讯混元 HY-Image-V3.0**（首发，支持传早八参考图）
-2. 🥈 智谱 CogView-4（降级，纯文本到图，无参考图）
-3. 🥉 本地封面库（兜底）
-
-## ⚙️ IP角色参考图配置
-
-在 `accounts.yaml` 中通过 `ip_character` 字段控制——**封面和文章配图独立配置**：
-
-```yaml
-ip_character:
-  cover:                                   # 封面参考图
-    character_dir: "F:/文章资料/IP形象图/早八.png"  # 图片路径，空则不传
-  article:                                 # 文章配图参考图（独立控制）
-    character_dir: "F:/文章资料/IP形象图/早八.png"
-```
-
-**逻辑**：
-- `character_dir` 是**完整的图片文件路径**。有路径+文件存在→传参考图。空路径或文件不存在→纯文本生图。
-- 封面和配图**可以不同角色**（如封面用早八配图用森森）：各自指定 `character_dir` 路径即可。
-- 所有公众号都必须配置 `ip_character`（路径设为空字符串就是不启用）。
-
-**临时覆盖**：
-```powershell
-# 用配置默认的路径
-python scripts/generate_cover.py junxun cover "prompt" output.png
-
-# 临时换参考图（不影响配置）
-python scripts/generate_cover.py junxun cover "prompt" output.png --ref-path "F:/文章资料/IP形象图/森森.png"
-# 当篇配图换参考图
-python scripts/generate_cover.py junxun img1 "prompt" img1.png --ref-path "F:/文章资料/IP形象图/淼淼喵.png"
-```
+- 封面（cover）：16:9 = **1536x864**
+- 配图（img1~5）：16:9 = **1024x576**
 
 ---
 
-**君寻配图提示词模板（prompt框架）**：
+## 7. 配图
 
-采用 **三段式 + 标准化风格词库** 结构：
+### 7.1 IP 角色参考图配置
+
+在 `accounts.yaml` 通过 `ip_character` 控制 —— **封面和文章配图独立配置**：
+
+```yaml
+ip_character:
+  cover:
+    character_dir: "F:/文章资料/IP形象图/早八.png"   # 图片文件路径，空则不传
+  article:
+    character_dir: "F:/文章资料/IP形象图/早八.png"
+```
+
+- `character_dir` 是**完整图片文件路径**。有路径 + 文件存在 → 传参考图；空或不存在 → 纯文本生图
+- 封面和配图**可以不同角色**（各自指定路径即可）
+- 临时覆盖：`--ref-path "F:/文章资料/IP形象图/森森.png"`
+- ⚠️ **君寻、岚牧哒都已配置 `早八.png`** —— 两号 prompt 第①段**都必须**以「参考图的卡通形象」开头。
+  旧说法「岚牧哒无参考图」已过期（2026-09-28 订正）
+
+### 7.2 配图 prompt 模板（三段式）
 
 ```
-# ① 主角：参考图的卡通形象 + 服装 + 动作（参考图由混元images参数传入原始素材文件）
-# ⚠️ 封面图必须确保IP角色是唯一/核心主角，占据画面视觉中心
+# ① 主角：参考图的卡通形象 + 服装 + 动作
+#    ⚠️ 封面必须确保 IP 角色是唯一/核心主角，占据画面视觉中心
 参考图的卡通形象，穿着[服装描述]，在做[具体动作/事情]。
 
 # ② 场景氛围：场景 + 构图 + 氛围
@@ -458,159 +507,33 @@ python scripts/generate_cover.py junxun img1 "prompt" img1.png --ref-path "F:/�
 顶级高清，顶级品质，电影级质感，8K高清画质。
 ```
 
-**核心规则（封面必须遵守）**：
-- 封面图必须以IP角色为**视觉中心**，不能是场景中不起眼的小人
-- prompt 第①段必须是「参考图的卡通形象」开头的角色描述
-- 封面角色的服装/动作/表情描述越具体越好
-- 配图可以角色偏小、偏侧面，但封面必须是正面/近景/主角位
+- 混元 `images` 参数传入角色素材文件，prompt 中**不写角色外貌**，用「参考图的卡通形象」引导
+- 风格词库固定，整篇文章所有配图风格统一；封面必须是正面/近景/主角位
 
-**示例（早八为主角，混元传参考图）**：
-```
-参考图的卡通形象，穿着连帽卫衣和运动裤，坐在堆满代码屏幕的办公桌前，
-一手拿咖啡一手敲键盘，屏幕泛着蓝光打在脸上，桌面堆着能量饮料罐。
-深夜办公室氛围，窗外城市霓虹。
-3D渲染，超现实主义，皮克斯风格，卡通，可爱，
-丁达尔效应，伦勃朗光色影调色，景深，层次感，
-顶级高清，顶级品质，电影级质感，8K高清画质。
-```
-
-**说明**：
-- 三段式骨架不变：`[主角+场景] → [视觉元素] → [风格光影]`
-- 混元 `images` 参数传入角色素材文件（路径取自 `accounts.yaml` 的 `ip_character` 配置），prompt中不写角色外貌，用「参考图的卡通形象」引导
-- 风格词库固定，整篇文章所有配图风格统一
-- 同一篇文章的封面和配图共用核心风格词，保持视觉一致性
-- use_reference=false 的账号（如岚牧哒），省略「参考图的卡通形象」引导词，直接描述画面
-
-### 第七步：上传素材
-
-```powershell
-# 上传封面（永久素材，必须用 --type thumb！）
-python scripts/upload_article_image.py junxun cover.png --type thumb --permanent
-# 返回 media_id（无 URL），用作 thumb_media_id
-
-# 上传配图（图文正文内嵌图片）
-python scripts/upload_article_image.py junxun img1.png img2.png img3.png
-```
-
-**⚠️ 关键区别（长期 bug 根因）**：
-- ⚠️ **统一入口**：`upload_article_image.py`（`upload_material.py` 已删除，功能合并至此）
-  - `--type image`（默认）：走 `media/uploadimg`，返回 `?from=appmsg` URL，**正文配图**
-  - `--type thumb`：走 `material/add_material?type=thumb`，返回 media_id，**封面缩略图**
-
-**参数**：
-- `--type thumb`：封面缩略图专用，调用 `add_material` + `type=thumb`，仅返回 `media_id`
-- 🔥 **封面务必加 `--type thumb`**，否则微信自动缩略图转换会生成全黑图片
-- 封面 `media_id` 直接传给草稿接口的 `thumb_media_id` 字段
-- 配图用 `upload_article_image.py`，返回的 URL 直接插正文 `<img src="...">`
-
-### 第八步：追加企业群二维码（仅君寻）
-
-每篇**君寻**文章末尾必须添加企业微信群二维码，居中放置。
-
-```html
-<!-- 追加到正文 content 末尾 -->
-<p style="text-align:center;margin:30px auto 10px;">
-  <img src="http://mmecoa.qpic.cn/sz_mmecoa_jpg/UobsGRjtYicVG1axkc3e3MLf1dtKCBfWjurXQfFWk8DthtyI7bb5dzEP27gUSWtic4CS14sPqVibibhGW97XztYM0ot9tHSq8dplEl364PlBeiaU/0?wx_fmt=jpeg" 
-       style="width:50%;height:auto;display:block;margin:0 auto;border-radius:8px;">
-</p>
-<p style="text-align:center;font-size:14px;color:#888888;margin-top:5px;">
-  <span>扫码加入君寻粉丝群，获取更多AI前沿资讯</span>
-</p>
-```
-
-**注意**：
-- 仅君寻账号需加，岚牧哒不加此二维码
-- 封面media_id入库后可复用，但二维码URL不变
-- 本地文件：`<your-local-path>/君寻企业微信群二维码.jpg`
-- 微信永久素材 media_id：`<!-- 请联系项目维护者获取 -->`
-
-### 第九步：创建草稿
-
-> 🚨 **排版自检**：在提交草稿之前，最后检查一遍正文 HTML：
-> - `<section>` 标签数 ≥ 2（否则纯段落堆叠，无排版效果）
-> - `<h2>` 标签数 ≥ 2（没有节标题等于没有文章结构）
-> - `<img>` 标签数 ≥ 3（配图数硬性下限）
-> - 君寻：正文末尾包含 `粉丝群` 文本（企业群二维码已附加）
-> 
-> **不通过 → 不创建草稿 → 回到第五步重新排**
-
-```powershell
-# 🔥 必须写临时文件传参！不要直接传 json 字符串到命令行，
-# PowerShell 管道会用 CP936 编码解码中文，标题中的汉字会变问号。
-$draft_json = @{
-  title = "文章标题"
-  author = "君寻"
-  content = "<p>正文HTML...</p>"
-  digest = "摘要"
-  thumb_media_id = "封面media_id"
-  need_open_comment = 1
-  only_fans_can_comment = 0
-  content_source_url = "文章来源原始URL"
-} | ConvertTo-Json -Depth 10
-
-$tmpFile = "$env:TEMP\draft_$(Get-Random).json"
-$draft_json | Out-File -FilePath $tmpFile -Encoding utf8
-python scripts/create_draft.py junxun "@$tmpFile"
-Remove-Item $tmpFile -Force
-```
-
-**注意**：`json=` 参数禁止，必须 `data=` + `json.dumps(..., ensure_ascii=False).encode('utf-8')`
-
-**必填参数（通过 draft_json 传入）**：
-| 字段 | 默认值 | 说明 |
-|------|--------|------|
-| `need_open_comment` | `1` | ⚠️ 必须设为1，开启评论区 |
-| `only_fans_can_comment` | `0` | 仅粉丝可评：1=仅粉丝，0=所有人 |
-| `content_source_url` | `""` | ⚠️ 必须填写文章来源原始URL，不能留空 |
-
-示例传参：
-```json
-{"title":"...","thumb_media_id":"...","need_open_comment":1,"only_fans_can_comment":0,"content_source_url":"https://example.com/original-article"}
-```
-
-### 第十步：记日志
-
-日志文件：`$log_dir/wechat_v2_YYYY-MM-DD.md`
+**混元使用要点**
+- 支持参考图，约 10 秒出图，**并发上限 1（必须串行）**，内置 3 次重试
+- 分辨率参数用**冒号**格式（`1024:576`）
+- ⚠️ **返回尺寸不稳定**：封面映射 `1280:720`，但可能返回 1024x576 →
+  流程走完**必须用 PIL 复检**封面实际像素，不足 1536x864 时用 LANCZOS 放大后再上传
 
 ---
 
-## 文件结构
+## 8. 解释器选择（强制）
 
-```
-C:\Users\LMD\.qclaw\
-├── skills\wechat-publisher\
-│   ├── SKILL.md           ← 本文件
-│   ├── config\accounts.yaml
-│   └── scripts\
-│       ├── upload_article_image.py   ← 上传图片（统一入口，image/thumb 双模式）
-│       ├── create_draft.py      ← 创建草稿（自动 token 重试）
-│       └── generate_cover.py    ← 生成封面（16:9，双链路）
-    ├── content_dedup.py      ← 内容级去重（4-gram Dice）
-├── secure\
-│   ├── .env_junxun             ← 君寻凭证
-│   └── .env_lanmuda            ← 岚牧哒凭证
-├── wechatlog\
-│   ├── junxun\history.db
-│   └── lanmuda\history.db
-└── wechat-assets\
-    ├── cover_library_junxun\
-    └── cover_library_lanmuda\
-```
+**本机 PATH 首位的 `python` 不能跑本技能的第三方依赖脚本。**
+
+- PATH 首位指向 `C:\Users\LMD\.workbuddy\binaries\python\versions\3.13.12\python.exe`（managed），
+  该环境**缺 `idna` 模块**，`import requests` 直接抛 `ModuleNotFoundError`
+  → `generate_cover.py` / `create_draft.py` / `upload_article_image.py` 全部无法启动
+- ✅ **一律显式调用 `C:/Python312/python.exe`**（requests / idna / yaml / PIL / urllib3 齐全，已实测）
+- 无第三方依赖的脚本（`semaphore_check.py` / `validate_*.py` / `patrol_check.py`）用 `python` 亦可，
+  但为统一起见建议全部用 `C:/Python312/python.exe`
+- 症状识别：报 `ModuleNotFoundError: No module named 'idna'` 或 `RequestsDependencyWarning`
+  → 换解释器，**不要 pip install 污染用户环境**
 
 ---
 
-## Cron 任务调用方式
-
-```
---account junxun
---account lanmuda
-```
-
-脚本会自动根据 `key` 字段匹配账号。
-
----
-
-## 编码规范（强制）
+## 9. 编码规范（强制）
 
 Python 脚本开头必须有：
 
@@ -620,7 +543,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 ```
 
-`requests.post` 禁止用 `json=` 参数：
+**`requests.post` 禁止用 `json=` 参数**：
 
 ```python
 import json, requests
@@ -630,79 +553,98 @@ data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 r = requests.post(url, data=data, headers=headers)
 ```
 
----
-
-## v2.10.0 更新（2026-07-20）
-
-### 新增
-1. ✅ **主题聚类去重（第四层防重）**【硬性】
-   - 候选文章与已选文章逐一对标核心主题（同一热点/同一产品/同一企业/同一事件）
-   - 即使不同角度、不同来源、不同URL，同一主题只保留1篇
-   - 判定标准：Agent 判断力，拿不准时宁可少选
-   - 7/20案例：WAIC AI玩具展开幕一稿两发（爆款公仔vs退货率）→ 同一主题，跳过
-
-2. ✅ **核心原则新增第1.5条**：主题去重（硬性）
-
-### 修复
+**已踩 4 次的坑**：Nginx 代理（airzoneapi.lanmuda.net）篡改 `requests` POST 的 Content-Type，
+UTF-8 字节被当 Latin-1 存进微信 → 中文乱码。**根治方案已固化在 `create_draft.py`**：
+改用 `urllib.request.urlopen` + 显式 `Content-Type: application/json; charset=utf-8`。
+`--create-in-progress` / `@file` 传参同理（PowerShell 管道走 CP936）。
 
 ---
 
-## v2.9.0 更新（2026-07-20）
+## 10. 文件结构
 
-### 修复
-1. ✅ **create_draft.py 中文乱码最终修复（第4次复发）**
-   - requests.post → urllib.request.urlopen
-   - 完全绕过requests库自动编码猜测
-   - 手动构建Request对象 + 显式UTF-8 Content-Type头
-   - 编码问题已确认根因为 Nginx 代理 (airzoneapi.lanmuda.net) gzip/content-type 传递
-   - commit: 7bf3a58, tag: v2.9.0
+```
+<skill_dir>\                          ← 本技能根目录
+├── SKILL.md                          ← 本文件（改文档改这里）
+├── CHANGELOG.md
+├── README.md
+├── _archive\                         ← 历史临时脚本与素材（只归档，不删除）
+├── config\accounts.yaml
+└── scripts\
+    ├── _rules.py                     ← ★ 内容安全词表唯一真源
+    ├── semaphore_check.py            ← 第〇步防重复硬屏障（三层）
+    ├── patrol_check.py               ← 巡检状态机（5 状态）
+    ├── filter_candidates.py          ← 选文 URL 去重（7 天）
+    ├── content_dedup.py              ← 选文内容级去重（4-gram Dice）
+    ├── generate_cover.py             ← 封面 + 配图生成（三级降级）
+    ├── upload_article_image.py       ← 上传素材（image / thumb 双模式）
+    ├── validate_article_html.py      ← 关卡①排版结构
+    ├── validate_title.py             ← 关卡②标题安全
+    ├── compliance_check.py           ← 关卡③合规硬化（金融/绝对化/医疗/投资）
+    ├── originality_check.py          ← 关卡④原创度（片段级）
+    ├── geo_stats.py                  ← GEO 数据资产提炼
+    ├── create_draft.py               ← 建稿（内置全部关卡双保险）
+    └── delete_draft.py               ← 撤稿（主题撞车时用）
 
----
-
-## v2.8.0 更新（2026-07-19）
-
-### 新增
-1. ✅ **标题内容安全硬性规则【硬性】**
-   - 禁词表：封杀、慌了、傻眼、倒闭、跑路、崩盘、喊杀、喊打
-   - 涉外敏感：硅谷、白宫、美国慌了、华盛顿、欧盟
-
-### 修复
-
----
-
-## v2.7.0 更新（2026-07-17）
-
-### 新增
-1. ✅ **排版自检硬性规则【硬性】**
-   - 正文必须含 `<section>` 组件、`<h2>` ≥ 2 个、`<img>` ≥ 3 张
-   - 君寻正文末尾必须含粉丝群二维码
-
-2. ✅ **原创保护规则第7条**：标题关键词不可与源文显著重叠
-
----
-
-## v2.5.1 更新（2026-07-09）
-
-### 新增
-1. ✅ `content_dedup.py` — 内容级去重脚本，基于 4-gram Dice 系数
-2. ✅ 选文阶段增加内容级去重（第三层防重），防止不同源不同URL写同一件事
-
-### 修复
-3. ✅ `.in_progress` 锁机制修复 daily + retry cron 双跑 race condition
-4. ✅ semaphore_check 三层屏障：history.db → .in_progress → .done
+<qclaw_home>\
+├── secure\.env_junxun / .env_lanmuda  ← 凭证
+├── wechatlog\
+│   ├── daily_YYYY-MM-DD.md            ← ★ 每天运行结果固定查看点
+│   ├── junxun\{history.db, wechat_v2_*.md}
+│   └── lanmuda\{history.db, wechat_v2_*.md}
+└── wechat-assets\cover_library_*
+```
 
 ---
 
-## v2.4.0 更新（2026-04-24）
+## 11. 版本历史
 
-### 已修复
-1. ✅ env key 名统一：`WECHAT_APP_ID`/`WECHAT_APP_SECRET`
-2. ✅ upload_material.py 支持 `--permanent` 永久素材（返回 URL）
-4. ✅ generate_cover.py 加载 env_file 设置环境变量
-5. ✅ generate_cover.py 封面尺寸 16:9（1536x864 / 1024x576）
-6. ✅ accounts.yaml 加 `key` 字段（junxun/lanmuda）
-7. ✅ gen_tencent fallback 修复（TokenHub 异步流程）
-8. ✅ cover_library 迁移到 `wechat-assets/` 目录
-9. ✅ create_draft.py 加 token 重试（最多 3 次）
-10. ✅ .env_junxun 清理杂质
-11. ✅ .env_lanmuda 补充 TENCENT_MAAS_KEY
+| 版本 | 日期 | 要点 |
+|------|------|------|
+| **v2.15.0** | 2026-09-29 | **GEO 第一阶段：合规硬化 + 可检索化**（详见下） |
+| v2.14.0 | 2026-09-29 | 新增 `originality_check.py`；正文规则新增「事实句/引语必须重构」 |
+| v2.13.0 | 2026-09-29 | 定时任务 3 任务合并为 1 个；90 分钟超时机制 |
+| v2.12.0 | 2026-09-28 | 解释器硬性规则；主题去重第五层（产品/公司名查库） |
+| v2.11.0 | 2026-09-18 | 新增 `validate_article_html.py` / `validate_title.py` 双关卡 + create_draft 内置双保险 |
+| v2.10.x | 2026-07 | 主题聚类去重；`filter_candidates.py` URL 硬过滤 |
+| v2.9.0 | 2026-07-20 | `create_draft.py` 中文乱码最终修复（requests → urllib） |
+| v2.8.0 | 2026-07-19 | 标题内容安全硬性规则 |
+| v2.7.0 | 2026-07-17 | 排版自检硬性规则；原创保护第 7 条 |
+| v2.5.1 | 2026-07-09 | `content_dedup.py`；`.in_progress` 锁修复双跑 |
+| v2.3~2.4 | 2026-04 | 多账号发布系统初版；`key` 字段路由；封面尺寸 16:9 |
+
+### v2.15.0 变更（2026-09-29）
+
+**背景**：两个号已有「内容违规 → 删文/警告」先例，且定下 GEO 第一阶段验收标准为
+「能过原创 + 不触发限流」。原关卡只覆盖「情绪对立词」，金融类与绝对化表述完全没覆盖。
+
+**新增**
+1. ✅ **`compliance_check.py`** —— 合规硬化关卡。四个维度：
+   - **F1** 硬禁词（标题命中即拦）· **F2** 涉政涉外词堆叠（≥2 个拦）
+   - **F3** 投资诱导 / 荐股类（拦）· **F4** 标题绝对化极限词（拦，广告法风险）
+   - **W1~W5** 软告警：正文情绪词 / 正文极限词（列上下文）/ 医疗疗效宣称 /
+     **金融数字缺出处**（数字周围 80 字无「据/报告/公告」→ 提示补出处）/ 品牌嵌入频率
+2. ✅ **`_rules.py`** —— 内容安全词表**唯一真源**。此前禁词表被抄在三处
+   （SKILL 文档 / `validate_title.py` / `create_draft.py`），改一处忘一处。现统一导入
+3. ✅ **`geo_stats.py`** —— GEO 独家数据资产提炼。从两个 `history.db` 生成
+   发布量 / 赛道分布 / 来源 Top / 品牌频次 / 热词，并直接产出**可引用的数据句**（`--sentences`）
+4. ✅ **§6.3 可检索化规范** —— 首段结论句 / 末尾 FAQ / 标题搜索意图词 / 独家数据段 / 品牌嵌入频率
+
+**修复**
+- `create_draft.py`：中文账号名（「君寻」）会**静默跳过**二维码检查与配额判断 →
+  新增 `resolve_account()` / `normalize_key()` 统一归一化；`run_preflight()` 加防御性归一化
+- `create_draft.py`：篇数配额硬编码 2/1 → 改读 `accounts.yaml` 的 `articles_per_day`
+- `create_draft.py`：新增**岚牧哒中文占比 ≥30% 关卡**（防「英文源未翻译即建稿」）
+- `create_draft.py`：配图计数口径与 `validate_article_html.py` 不一致（set vs list）→ 统一
+- `validate_article_html.py`：`<section>` 阈值文档写 ≥1、SKILL 写 ≥2、代码判 ≥1 → 统一为 **≥2**
+- `validate_title.py`：`c_issues` 未定义隐患；正文只报第一个词 → 改为列全部命中
+- `accounts.yaml`：君寻 `author` 由「君寻」订正为「**君寻智能**」（与线上署名一致）；
+  清理已废弃的 `retry` 调度字段；岚牧哒补上 `articles_per_day: 1`
+- 目录卫生：scripts 与 skill 根目录的历史临时脚本 / 图片归档至 `_archive/`
+
+**待办**
+- `freepublish/submit` 自动发布 → **暂缓**。2026-03-27 微信新规《运营规范》新增
+  「**非真人自动化创作行为**」，禁止 ① AI 生成/改写/拼接/搬运内容 ② 脚本、程序托管等方式
+  **批量、连续发布** ③ 传播此类教程服务。处罚含流量限制、删除、账号能力限制、封禁。
+  我方两条均命中 → **发布环节保留人工**
+- **原创声明无法 API 化**：微信官方明确「API 不支持原创」，须在 MP 后台手动勾选后再调群发接口
+  才有标识。实测已发文章 `copyright_stat` 全为 0（1=原创、0=非原创）→ **发文时需人工勾选原创**
