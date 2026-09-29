@@ -29,8 +29,13 @@ create_draft.py - 创建微信图文草稿
 import sys, io, os, json, requests, time, urllib3, ssl, urllib.request
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # requests 仅用于 token 获取；创建草稿用 urllib（避免 Nginx 代理的 Content-Type/gzip 编码问题）
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+# UTF-8 输出。用 reconfigure 而不是替换 sys.stdout 对象 ——
+# 替换会让被 import 时的调用方 buffer 被 GC 关闭（ValueError: I/O operation on closed file）
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

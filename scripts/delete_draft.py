@@ -16,8 +16,13 @@
 """
 import sys, io, os, json, time, requests, urllib3, urllib.request, ssl, sqlite3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+# UTF-8 输出。用 reconfigure 而不是替换 sys.stdout 对象 ——
+# 替换会让被 import 时的调用方 buffer 被 GC 关闭（ValueError: I/O operation on closed file）
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 
 def load_env(env_file):

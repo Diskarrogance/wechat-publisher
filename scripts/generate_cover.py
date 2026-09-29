@@ -2,14 +2,24 @@
 # -*- coding: utf-8 -*-
 """Generate cover/article images for WeChat articles."""
 import sys, io, os, json, time, base64, requests
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+# UTF-8 输出。用 reconfigure 而不是替换 sys.stdout 对象 ——
+# 替换会让被 import 时的调用方 buffer 被 GC 关闭（ValueError: I/O operation on closed file）
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).parent.parent / "config" / "accounts.yaml"
-SECURE_DIR = Path(__file__).parent.parent.parent / "secure"
-COVER_LIB_DIR = Path(__file__).parent.parent.parent / "wechat-assets"
+# 目录层级：<root>/skills/wechat-publisher/scripts/generate_cover.py
+# parents[0]=scripts  [1]=wechat-publisher  [2]=skills  [3]=<root>
+# ⚠ 曾经写成 parent.parent.parent（少一层），解析到不存在的 skills/wechat-assets，
+#    导致 Tier-3 封面库兜底静默失效。改动此处务必跑 _selftest 验证路径存在。
+_ROOT = Path(__file__).resolve().parents[3]
+CONFIG_PATH = _ROOT / "skills" / "wechat-publisher" / "config" / "accounts.yaml"
+SECURE_DIR = _ROOT / "secure"                 # C:\Users\LMD\.qclaw\secure
+COVER_LIB_DIR = _ROOT / "wechat-assets"       # C:\Users\LMD\.qclaw\wechat-assets
 
 def load_config(account_key):
     """Load account config from YAML with proper nesting."""
@@ -182,18 +192,34 @@ def download_image(url, output_path):
     return False
 
 def pick_fallback(account_key, image_type="cover"):
-    """Pick a random image from cover library."""
-    import random
-    lib_dir = Path(__file__).parent.parent.parent / "wechat-assets" / f"cover_library_{account_key}"
-    if lib_dir.exists():
+    """Pick a random image from cover library.
+
+    路径优先取 accounts.yaml 的 cover_library（唯一真源），
+    退化时才用 COVER_LIB_DIR/<cover_library_<key>>。
+    """
+    import random, shutil
+    cfg = load_config(account_key) or {}
+    configured = cfg.get('cover_library', '')
+
+    lib_dir = None
+    if configured and os.path.isdir(configured):
+        lib_dir = Path(configured)
+    elif (COVER_LIB_DIR / f"cover_library_{account_key}").is_dir():
+        lib_dir = COVER_LIB_DIR / f"cover_library_{account_key}"
+
+    if lib_dir:
         images = list(lib_dir.glob("*.png")) + list(lib_dir.glob("*.jpg"))
         if images:
             chosen = random.choice(images)
-            import shutil
             output = Path(f"output_{image_type}_{account_key}.png")
             shutil.copy(chosen, output)
-            print(f"Fallback: copied {chosen} to {output}")
+            print(f"Fallback: copied {chosen.name} -> {output}  (lib={lib_dir})")
             return str(output)
+        print(f"Fallback 失败：封面库为空 {lib_dir}")
+        return None
+
+    print(f"Fallback 失败：封面库路径不存在 "
+          f"(accounts.yaml.cover_library={configured!r}, 默认={COVER_LIB_DIR})")
     return None
 
 def main():

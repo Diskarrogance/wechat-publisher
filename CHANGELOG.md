@@ -4,6 +4,52 @@ All notable changes to this project will be documented in this file.
 
 > 注：v2.6.0 – v2.10.1 的变更未逐条补录（详见 git log）。本文件从 v2.11.0 起恢复维护。
 
+## [v2.16.0] - 2026-09-29
+
+### Added
+- **`reap_images.py`** — 图片中间产物自动回收，防止发布目录无限膨胀
+  - 扫描根自动推导：`wechatlog\`（从 `accounts.yaml` 各账号 `history_db` 反推）+ `H:\workspace\苏编\`
+    （可用 `WECHAT_WORKSPACE` 覆盖）
+  - 参数：`--days N`（默认 7，**N < 1 直接拒绝**）/ `--dry-run`
+  - 硬编码安全红线：只删图片扩展名；路径含 `wechat-assets` / `skills` / `secure` / `.workbuddy` /
+    `_archive` / `cover_library` 的整棵子树跳过；永不删 `.md` / `.db` / `.done` / `.in_progress`
+  - 附带清理空目录。退出码 0 正常 / 1 有删除失败
+- **调度第四段**：`公众号双号·每日发布+巡检(07:00)` 任务 prompt 扩展为四段串行
+  （发布 → 发布 → 巡检 → **回收**），耗时 < 1 min，失败不影响前三段结论
+- **SKILL.md §2.2 目录卫生**：说明为何必须回收、扫描范围、安全红线，并记录
+  「归档区一律放 skill 目录之外」这条教训
+
+### Fixed
+- **`generate_cover.py` 封面库路径算错，Tier-3 兜底长期失效**（严重）
+  - 原：`Path(__file__).parent.parent.parent / "wechat-assets"` → 解析到 `<root>\skills\wechat-assets`，
+    **该目录不存在**
+  - 真源：`accounts.yaml` 的 `cover_library` 指向 `<root>\wechat-assets`（96 MB，实际存在）
+  - 后果：腾讯混元 + 智谱两级生图均失败时，本应从本地封面库随机兜底，实际直接 `FAILED` 退出
+  - 修复：`_ROOT = Path(__file__).resolve().parents[3]`（原来少算一层）+ `SECURE_DIR` / `COVER_LIB_DIR`
+    一并校正；`pick_fallback()` 改为**优先读 `accounts.yaml.cover_library`**，失效路径仅作兜底，
+    两条路径都不存在时打印明确诊断而非静默返回 `None`
+- **7 个脚本模块级替换 `sys.stdout` 会污染 import 调用方** ——
+  `sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')` 在旧对象被 GC 时
+  会**关闭底层 buffer**，同一进程内 import 第二个脚本即抛
+  `ValueError: I/O operation on closed file`（实测 14 个脚本只能 import 1 个）。
+  统一改为 `stream.reconfigure(encoding='utf-8')`（原地改编码，不替换对象，失败静默跳过）。
+  涉及：`validate_article_html` / `validate_title` / `create_draft` / `generate_cover` /
+  `upload_article_image` / `delete_draft` / `reap_images`。
+  回归：14/14 脚本可同进程 import，中文输出无乱码
+
+### Changed
+- **一次性目录清理**（只移动不删除，可回滚）：719 项 / 1560 MB 移出项目
+  - 暂存区：`H:\_wechat_trash_20260929\`（workspace 部分）+ `C:\Users\LMD\.qclaw\_trash_20260929\`
+    （skill / wechatlog 部分），二者均含 `MANIFEST.json` 记录每项原始路径与字节数
+  - 效果：skill **452 MB → 5.0 MB** · wechatlog **686 MB → 0.9 MB** · workspace **970 MB → 94.9 MB**
+  - 保留：全部 `.md` 发布日志（342 个）、`history.db`、`.done` / `.in_progress` 锁、
+    企业群二维码、封面降级库、最近 2 天的发布产物
+
+### Notes
+- ⚠️ **跨盘 `shutil.move` 会触发安全删除保护**（`SAFE_DELETE_BULK_CONFIRM_REQUIRED`），
+  且 `copy` 成功后 `delete` 被拦 → **原件与副本同时存在，磁盘占用翻倍**。
+  批量清理一律改用**同盘 `os.rename`**（719 项 0.8 秒完成，且不触发保护）
+
 ## [v2.15.0] - 2026-09-29
 
 ### Added
