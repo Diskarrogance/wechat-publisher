@@ -33,6 +33,14 @@ All notable changes to this project will be documented in this file.
 - `validate_title.py`：`c_issues` 未定义隐患（未传第三个参数时的分支脆弱）；正文由「只报第一个词」改为列全部命中
 - `accounts.yaml`：君寻 `author` 由「君寻」订正为「**君寻智能**」（与线上实际署名一致）；
   清理已废弃的 `retry` 调度字段；岚牧哒补 `articles_per_day: 1`
+- `.gitignore`：`scripts/_*` 会把新核心文件 `_rules.py` 一并忽略 → 加 `!scripts/_rules.py` 例外；
+  新增 `_archive/` 忽略
+- `content_dedup.py`：`db` 路径原先只检查**父目录**是否存在 → `sqlite3.connect` 对不存在的文件
+  **静默建空库**，随后 `SELECT` 抛 `no such table` 未捕获 → 脚本以异常码崩溃，
+  调用方可能误读为 `DUPLICATE(1)` 而错杀选题。改为检查文件本身 + 捕获异常明确返回 `exit 2`
+- `delete_draft.py`：不支持中文账号名（`next(...)` 直接 `StopIteration`）；
+  撤稿后需手动写 SQL 清 `history.db` 占位（对真身数据库手动操作有风险）→
+  新增 `--purge-history` 选项，按 `media_id` **精确匹配**清理，两步并作一条命令
 
 ### Chore
 - 目录卫生：`scripts/` 与 skill 根目录的历史临时脚本 / 素材（约 280 项）归档至 `_archive/20260929_cleanup/`

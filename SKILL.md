@@ -173,7 +173,7 @@ C:/Python312/python.exe -c "import sqlite3;c=sqlite3.connect(r'C:\Users\LMD\.qcl
 逐条比对候选文章涉及的产品名 / 公司名 / 核心人物。**命中即作废该候选，不许换角度重写。**
 
 > 📌 两次事故：2026-09-26、2026-09-28（bibo / 杭州镭萌科技，两篇 URL 不同、标题 4-gram Dice = 0.000，所有脚本全部放行）。
-> 处置组合：`delete_draft.py` 撤稿 + `DELETE FROM history WHERE rowid=<id>` 清占位 + 换选题重做。
+> 处置一条命令搞定：`delete_draft.py <key> <media_id> --purge-history`（撤稿 + 清 history 占位），然后换选题重做。
 
 ### 第五步：翻译改写 + 排版
 
@@ -284,7 +284,7 @@ curl.exe "$proxy/cgi-bin/draft/batchget?access_token=$TOKEN"
 | `validate_title.py` | 标题：≤64 字符 / 硬禁词 / 涉政词 / 情绪对立 | 0 通过 · 1 失败 | 改标题 |
 | `compliance_check.py` | **合规硬化**：金融数据出处 / 绝对化表述 / 医疗宣称 / 投资诱导 | 0 通过 · 1 FAIL | 改命中处 |
 | `originality_check.py` | 原创度：与源文逐句比对，拦照抄片段 | 0 通过 · **1 BLOCK** · 2 无法比对 | 重写命中句 |
-| `content_dedup.py` | 内容级去重（选文阶段） | 1 = DUPLICATE | 换选题 |
+| `content_dedup.py` | 内容级去重（选文阶段） | 1 = DUPLICATE · 2 = 读库异常（**非**重复） | 换选题 / 排查 |
 | `filter_candidates.py` | URL 去重（选文阶段） | 0 正常 | 只在过滤结果里选 |
 
 ```powershell
@@ -583,7 +583,7 @@ UTF-8 字节被当 Latin-1 存进微信 → 中文乱码。**根治方案已固�
     ├── originality_check.py          ← 关卡④原创度（片段级）
     ├── geo_stats.py                  ← GEO 数据资产提炼
     ├── create_draft.py               ← 建稿（内置全部关卡双保险）
-    └── delete_draft.py               ← 撤稿（主题撞车时用）
+    └── delete_draft.py               ← 撤稿（主题撞车时用，--purge-history 连带清 history 占位）
 
 <qclaw_home>\
 ├── secure\.env_junxun / .env_lanmuda  ← 凭证

@@ -18,7 +18,9 @@ content_dedup.py - 内容级去重（v2.5.1）
 返回：
   exit 0 = UNIQUE（无重复，可继续）
   exit 1 = DUPLICATE（内容重复，停止）
-  exit 2 = ERROR（异常，保守放行）
+  exit 2 = ERROR（读库失败等异常 —— **不是重复**，由调用方决定是否继续）
+
+  注意：不存在 history.db 时返回 exit 0 `UNIQUE [no_db]`（首次运行场景，非异常）。
 """
 import sys, os, re, sqlite3, datetime
 
@@ -54,14 +56,22 @@ def dice(a: set, b: set) -> float:
 
 
 def load_recent_titles(db_path: str) -> list:
+    """读取近 7 天标题。
+
+    ⚠️ 注意：sqlite3.connect 对**不存在的文件会静默创建空库**，
+    随后 `SELECT ... FROM history` 抛 no such table。若不捕获，脚本会以
+    非 0/1/2 的码崩溃 —— 调用方可能误读成 DUPLICATE(1) 而错杀选题。
+    故此处显式检查文件存在性并捕获异常。
+    """
     today = datetime.date.today()
     start = (today - datetime.timedelta(days=LOOKBACK_DAYS)).isoformat()
     conn = sqlite3.connect(db_path)
-    c = conn.cursor()
-    c.execute('SELECT title FROM history WHERE date >= ? ORDER BY rowid DESC', (start,))
-    rows = [r[0] for r in c.fetchall() if r[0]]
-    conn.close()
-    return rows
+    try:
+        c = conn.cursor()
+        c.execute('SELECT title FROM history WHERE date >= ? ORDER BY rowid DESC', (start,))
+        return [r[0] for r in c.fetchall() if r[0]]
+    finally:
+        conn.close()
 
 
 def main():
@@ -82,8 +92,9 @@ def main():
         sys.exit(2)
 
     db_path = acct.get('history_db', '')
-    if not db_path or not os.path.exists(os.path.dirname(db_path)):
-        print("UNIQUE [no_history]")
+    # 检查 db **文件本身**是否存在（只看父目录会让 sqlite 建出空库）
+    if not db_path or not os.path.exists(db_path):
+        print("UNIQUE [no_db]")
         sys.exit(0)
 
     new_fp = ngram_set(title)
@@ -91,7 +102,13 @@ def main():
         print("UNIQUE [tiny_fp]")
         sys.exit(0)
 
-    history = load_recent_titles(db_path)
+    try:
+        history = load_recent_titles(db_path)
+    except Exception as e:
+        # 明确 exit 2（非 1），避免被调用方误判为 DUPLICATE
+        print(f"ERROR [db_read_failed] {type(e).__name__}: {e}")
+        sys.exit(2)
+
     if not history:
         print("UNIQUE [no_recent]")
         sys.exit(0)
