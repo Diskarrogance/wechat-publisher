@@ -32,8 +32,6 @@ wechat-publisher/
 ├── CHANGELOG.md
 ├── config/
 │   └── accounts.yaml             ← 账号配置（**不含密钥，需自行填写**）
-├── assets/
-│   └── cover_library/            ← 本地封面兜底库
 └── scripts/
     ├── _rules.py                 ← ★ 内容安全词表唯一真源
     ├── semaphore_check.py        ← 第〇步防重复硬屏障（三层）
