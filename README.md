@@ -30,7 +30,6 @@
 wechat-publisher/
 ├── SKILL.md                      ← 完整操作手册（十步流程 + 规范）
 ├── CHANGELOG.md
-├── _archive/                     ← 历史临时脚本与素材（只归档，不删除）
 ├── config/
 │   └── accounts.yaml             ← 账号配置（**不含密钥，需自行填写**）
 ├── assets/
@@ -48,6 +47,7 @@ wechat-publisher/
     ├── compliance_check.py       ← 关卡③ 合规硬化
     ├── originality_check.py      ← 关卡④ 原创度（片段级）
     ├── geo_stats.py              ← GEO 数据资产提炼
+    ├── reap_images.py            ← 图片中间产物回收（第四段，默认保留 7 天）
     ├── create_draft.py           ← 建稿（内部内置全部关卡双保险）
     └── delete_draft.py           ← 撤稿（主题撞车时用）
 ```
@@ -244,7 +244,7 @@ PowerShell 命令行传递中文 JSON → 自动转为 CP936 → Python 解码�
 - 支持会话级超时终止
 - prompt 自包含（调度层每次运行通常开新会话，无上下文继承）
 
-典型做法是把「多账号发布 + 巡检补发」合并为**一个任务、多段串行**，段间互不阻塞：
+典型做法是把「多账号发布 + 巡检补发 + 图片回收」合并为**一个任务、多段串行**，段间互不阻塞：
 
 ```yaml
 schedule:
