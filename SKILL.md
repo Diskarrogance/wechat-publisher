@@ -30,7 +30,7 @@
 | | 君寻 | 岚牧哒 |
 |---|---|---|
 | key | `junxun` | `lanmuda` |
-| AppID | `wx63cb34cef9deb8c0` | `wxd1c765258d626535` |
+| AppID | 见 `config/accounts.yaml`（不入版本库） | 同左 |
 | 作者署名 | **君寻智能** | 岚牧哒 |
 | 每日配额 | 2 篇（AI玩具 > 潮玩 > AI科技 > 其他，中文源优先） | 1 篇（英文翻译源） |
 | 企业群二维码 | **必加**（正文末尾居中） | 不加 |
@@ -594,7 +594,7 @@ data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 r = requests.post(url, data=data, headers=headers)
 ```
 
-**已踩 4 次的坑**：Nginx 代理（airzoneapi.lanmuda.net）篡改 `requests` POST 的 Content-Type，
+**已踩 4 次的坑**：自建 Nginx 反向代理网关会篡改 `requests` POST 的 Content-Type，
 UTF-8 字节被当 Latin-1 存进微信 → 中文乱码。**根治方案已固化在 `create_draft.py`**：
 改用 `urllib.request.urlopen` + 显式 `Content-Type: application/json; charset=utf-8`。
 `--create-in-progress` / `@file` 传参同理（PowerShell 管道走 CP936）。

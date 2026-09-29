@@ -94,7 +94,7 @@ def create_draft(token, draft_info, proxy):
     }
 
     # 🔥 使用 urllib 替代 requests 发送 POST
-    # requests 在通过 Nginx 代理（airzoneapi.lanmuda.net）时 Content-Type 被篡改，
+    # requests 在通过自建 Nginx 代理网关时 Content-Type 被篡改，
     # UTF-8 字节被当 Latin-1 存入微信服务器 → 中文正文变乱码（第 4 次复发）
     # urllib 更底层，不进行编码猜测
     ctx = ssl.create_default_context()
