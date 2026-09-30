@@ -132,9 +132,11 @@ def check(title, content):
             warns.append(f'      {g}  ←  …{body[a:b]}…')
 
     # ── W5 品牌嵌入频率（GEO 红线：一篇 1~2 次，硬塞判软文）──
+    # 统计前先剔除二维码引导文案（「扫码加入君寻粉丝群」是固定模板，不算品牌嵌入）。
+    _body_nb = re.sub(r'[^。！？\n]*(?:扫码|粉丝群|二维码)[^。！？\n]*', '', body)
     brand_stats = {}
     for name in ('君寻智能', '岚牧哒', '君寻'):
-        n = len(re.findall(re.escape(name), body))
+        n = len(re.findall(re.escape(name), _body_nb))
         if n:
             brand_stats[name] = n
     if brand_stats.get('君寻智能', 0) > 0 and brand_stats.get('君寻', 0) > brand_stats.get('君寻智能', 0):

@@ -155,7 +155,7 @@ def normalize_key(account):
     return (a or {}).get('key') or account
 
 
-def run_preflight(acct_key, title, content):
+def run_preflight(acct_key, title, content, source_file=None):
     """建稿前硬关卡。返回 exit_code（0=通过，1=拒绝）或 None（校验异常，不阻断）
 
     防御性归一化：调用方可能传中文名「君寻」，不归一化会导致
@@ -226,17 +226,49 @@ def run_preflight(acct_key, title, content):
                   f"疑似英文源未翻译，禁止创建草稿")
             return 1
 
+    # ── 7. GEO 就绪度 / 原创可声明性（2026-09-30 新增）──
+    # 目的：保证每篇都具备「可检索化四要素」且与源文/本站历史无高重合，
+    # 使文章在 MP 后台能顺利勾选原创声明（见 SKILL.md §11）。
+    try:
+        import geoready_check as _gr
+        _r = _gr.run_html(content, acct_key, source_file=source_file)
+        for _w in _r.get('warns', []):
+            if _w.startswith('未提供源文'):
+                continue          # 无源文是常态（补发/手工稿），不刷屏
+            print(f"  ⚠ {_w}")
+        if _r.get('fails'):
+            print("GEOREADY_FAIL: 可检索化 / 原创可声明性未通过，禁止创建草稿")
+            for _f in _r['fails']:
+                print(f"  ✗ {_f}")
+            print("处置：补齐要素（首段结论句 / 独家数据段 / 末尾 2~3 组 Q&A）或重写撞车片段")
+            return 1
+    except Exception as _ge:
+        print(f"[WARN] geoready_check 不可用（{type(_ge).__name__}: {_ge}），"
+              f"降级跳过 GEO 就绪度检查", file=sys.stderr)
+
     return 0
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("用法: python create_draft.py <account> [draft_json|@file]", file=sys.stderr)
+    # 可选参数剥离：--source-file <路径>（供 GEO 就绪度关卡做源文相似度比对）
+    _argv = list(sys.argv[1:])
+    source_file = None
+    if '--source-file' in _argv:
+        _i = _argv.index('--source-file')
+        if _i + 1 < len(_argv):
+            source_file = _argv[_i + 1]
+            del _argv[_i:_i + 2]
+        else:
+            del _argv[_i]
+
+    if len(_argv) < 1:
+        print("用法: python create_draft.py <account> [draft_json|@file] [--source-file <源文>]",
+              file=sys.stderr)
         sys.exit(2)
 
-    account = sys.argv[1]
-    if len(sys.argv) >= 3:
-        draft_json_arg = sys.argv[2]
+    account = _argv[0]
+    if len(_argv) >= 2:
+        draft_json_arg = _argv[1]
         if draft_json_arg.startswith('@'):
             with open(draft_json_arg[1:], 'r', encoding='utf-8') as _f:
                 draft_json = _f.read()
@@ -270,7 +302,8 @@ def main():
 
     # 🚨 建稿前硬关卡（详见模块 docstring）
     try:
-        _code = run_preflight(acct_key, draft_info.get('title', ''), draft_info.get('content', ''))
+        _code = run_preflight(acct_key, draft_info.get('title', ''), draft_info.get('content', ''),
+                              source_file=source_file)
         if _code:
             sys.exit(_code)
     except Exception as _e:
@@ -356,6 +389,23 @@ def main():
                        check=True, capture_output=True, timeout=10)
     except Exception as sem_e:
         print(f'[WARN] semaphore_check --create-done failed: {sem_e}', file=sys.stderr)
+
+    # ★ 写站内正文索引（供后续文章做正文级撞车检测，见 geoready_check.py）
+    try:
+        import re as _re
+        import geoready_check as _gr
+        _ip = _gr.index_path(db_path, acct_key)
+        _items = _gr.load_index(_ip)
+        _body = _gr.body_only(_gr.to_text(draft_info.get('content', '')))
+        _sig = _gr.minhash(_gr.ngrams(_body))
+        _items = [x for x in _items
+                  if not (x.get('date') == today_str and x.get('title') == draft_info['title'])]
+        _items.append({'date': today_str, 'title': draft_info['title'],
+                       'chars': len(_re.sub(r'\s', '', _body)), 'sig': _sig})
+        _gr.save_index(_ip, _items)
+        print(f'[index] 站内正文索引已更新（{len(_items)} 篇）', file=sys.stderr)
+    except Exception as _ie:
+        print(f'[WARN] 写站内正文索引失败: {_ie}', file=sys.stderr)
 
     print(media_id)
 
