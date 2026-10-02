@@ -83,12 +83,45 @@ def check_content(content):
 # ────────────────────────────────────────────────────────────
 HEAD_LEN = 12           # 前 N 字 = 搜索命中关键位
 LEN_TARGET_MAX = 26     # 标题长度目标上限
-CATEGORY_WORDS = [
+
+# 词库真源 = config/keywords.yaml（category + brand + search_terms）。
+# 下面的内置副本仅在 yaml 不可读时回落，**绝不静默放行**（历史教训：禁词表被抄成三份，改一处漏两处）。
+_FALLBACK_KEYWORDS = [
     'AI玩具', '陪伴机器人', '人形机器人', '机器人', '潮玩', '盲盒', '谷子', '手办', '模型',
     'AI眼镜', '智能眼镜', '助听器', '耳机', '音箱', '芯片', '算力', '大模型', '具身智能',
     '智能体', '掌机', '无人机', '毛绒', '挂件', '戒指', '投影', '相机', '眼镜', '玩具',
-    '平板', '手机', '电动车', '音箱', '机器人',
+    '平板', '手机', '泡泡玛特', 'LABUBU',
 ]
+CATEGORY_WORDS = _FALLBACK_KEYWORDS      # 兼容旧引用
+_KEYWORD_CACHE = None
+
+
+def _load_keywords():
+    """从 config/keywords.yaml 读搜索词库（唯一真源）。失败回落内置副本。"""
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     'config', 'keywords.yaml')
+    try:
+        import yaml
+        with open(p, encoding='utf-8') as f:
+            d = yaml.safe_load(f) or {}
+        words = []
+        for section in ('category', 'brand', 'search_terms'):
+            for item in (d.get(section) or []):
+                if isinstance(item, dict) and item.get('word'):
+                    words.append(str(item['word']))
+        if words:
+            return words
+        print('[WARN] keywords.yaml 为空，回落内置词表', file=sys.stderr)
+    except Exception as e:
+        print(f'[WARN] 读取 keywords.yaml 失败（{type(e).__name__}: {e}），回落内置词表', file=sys.stderr)
+    return _FALLBACK_KEYWORDS
+
+
+def _keywords():
+    global _KEYWORD_CACHE
+    if _KEYWORD_CACHE is None:
+        _KEYWORD_CACHE = _load_keywords()
+    return _KEYWORD_CACHE
 
 
 def search_friendliness(title):
@@ -96,7 +129,7 @@ def search_friendliness(title):
     msgs = []
     head = title[:HEAD_LEN]
     has_entity = bool(re.search(r'[A-Za-z][A-Za-z0-9\-]{1,}', head)) or \
-        any(w in head for w in CATEGORY_WORDS)
+        any(w in head for w in _keywords())
     if not has_entity:
         msgs.append(f"WARN[GEO-1]: 前 {HEAD_LEN} 字无「品牌名/品类词」实体 → 受搜一搜匹配率低"
                     f"（实为：{head}）")
