@@ -1,0 +1,219 @@
+# ============================================================
+# 多平台分发 · 平台能力矩阵与 GEO 规则
+#
+# 【本模块的设计主轴：GEO，不是"多平台搬运"】
+#
+# 核心逻辑（2026-10-02 实测结论）：
+#   微信内容对爬虫的屏蔽是**分级的** ——
+#     ❌ 被挡（775B「该页面不存在」）：Baiduspider、Bytespider、Googlebot
+#     ✅ 通行（正文完整 3.49MB）：GPTBot、ClaudeBot、PerplexityBot、头条 Spider、普通浏览器
+#   也就是说：**微信内容海外 AI 引擎抓得到，百度系与字节系抓不到。**
+#
+#   → 所以多平台分发的目的**不是"发得多"**，而是**补搜索入口**：
+#     · 公众号服务号：官方明确「推荐是订阅号的能力」→ 只有搜一搜 + 海外 AI 引擎
+#     · 百家号  → 补【百度 / 文心】入口
+#     · 头条号  → 补【字节 / 豆包】入口，且**零粉也有推荐流量**
+#     · 小红书  → 补【决策型搜索】（"XX推荐/怎么选/避坑"）
+#     · 微博    → 补【话题场 + 推荐流】（无内容搜索优势，靠话题）
+#
+#   每加一个平台 = 多一个"能被搜到/被推荐"的入口。这是本模块的取舍标准：
+#   **一个平台若不能补搜索入口、也不能给公域推荐，就不值得做。**
+#
+# 用法
+#   python scripts/distribute/geo_adapt.py list                     # 看矩阵
+#   python scripts/distribute/geo_adapt.py check <平台> --title "…"  # 校验某平台版本
+#   python scripts/distribute/geo_adapt.py check <平台> --title "…" --content x.html --tags a,b
+#
+# ⚠️ 置信度标注：high = 官方文档/官方回复；medium = 权威媒体报道；low = 第三方经验值（待实测校准）
+# ============================================================
+version: 1
+updated: "2026-10-02"
+
+platforms:
+
+  # ────────────────────────────────────────────────
+  wechat_mp:
+    name: "微信公众号（君寻 / 岚牧哒）"
+    account_type: "服务号"
+    priority: 1
+    status: "已打通"            # 发布链路已自动化
+    geo:
+      entries:                  # 我们可以触达的搜索/推荐入口
+        - {name: "微信搜一搜", confidence: high, note: "实测占两号流量的 82%"}
+        - {name: "海外 AI 引擎（GPTBot / ClaudeBot / PerplexityBot）", confidence: high,
+           note: "实测能抓公众号全文；百度系与字节系抓不到"}
+      recommend: false
+      recommend_note: "官方明确：「推荐是订阅号的能力……服务号的流量平台不会做干预，不会多分发也不会限流」"
+      ai_crawlers_blocked: ["Baiduspider", "Bytespider", "Googlebot"]
+    publish:
+      method: "api"
+      endpoint: "cgi-bin/freepublish/submit"
+      need_scan: false
+      note: "原创声明须在 MP 后台手动勾（API 不支持）；已发表文章不支持事后补标"
+    title:
+      min: 8
+      max: 26                  # 目标 18~24
+      must_have_entity_in_head: 12   # 前 12 字须含品牌/品类实体
+      confidence: high
+    body:
+      min_chars: 600
+      require: ["首段结论句", "独家数据段", "末尾 2~3 组 Q&A", "品牌嵌入 1~3 次"]
+      forbid: []
+      confidence: high
+    tags:
+      required: false
+      note: "合集标签可选；是否影响推荐未证实"
+      confidence: low
+    extra:
+      qr_code: "君寻必加企业群二维码；岚牧哒不加"
+      originality: "需在后台勾原创声明"
+
+  # ────────────────────────────────────────────────
+  toutiao:
+    name: "今日头条 · 头条号"
+    priority: 2
+    status: "未接入（待账号）"
+    geo:
+      entries:
+        - {name: "头条搜索", confidence: medium}
+        - {name: "推荐流（分层流量池）", confidence: high,
+           note: "官方推荐负责人在创作者大会公开机制；人民日报海外版 + 界面新闻报道"}
+      recommend: true
+      recommend_note: "零粉丝也有冷启动曝光；**深度内容有独立冷启动流量池**，不与热点娱乐抢量；2026 新规「粉丝量不再决定流量上限」"
+      ai_crawlers_blocked: []
+    publish:
+      method: "api"
+      endpoint: "字节跳动开放平台（open.douyin.com）OAuth2"
+      need_scan: false
+      note: "需注册开发者账号 → 创建应用 → 选内容创作类目 → 审核；个人通过率未知"
+      fallback: "浏览器自动化（agent-browser）"
+    title:
+      min: 8
+      max: 30
+      must_have_entity_in_head: 12
+      confidence: medium
+    body:
+      min_chars: 900
+      require: ["开篇 3 秒抓眼（结论前置）", "每 300 字一个钩子", "结构清晰（小标题分段）"]
+      forbid: ["公众号企业群二维码", "站外引流二维码", "「扫码关注」类话术"]
+      confidence: medium
+    tags:
+      required: true
+      count: [3, 5]
+      note: "领域标签影响冷启动池的匹配精度"
+      confidence: medium
+    extra:
+      signature: "去掉「君寻智能」式署名或改为中性；平台内不要做跨平台引流"
+      intent: "资讯型：官宣 / 发布 / 卖爆 / 背后"
+
+  # ────────────────────────────────────────────────
+  baijiahao:
+    name: "百家号"
+    priority: 3
+    status: "未接入（待账号）"
+    geo:
+      entries:
+        - {name: "百度搜索 / 文心", confidence: high,
+           note: "补百度入口 —— 微信内容被 Baiduspider 屏蔽，只能靠百家号进百度"}
+      recommend: true
+      recommend_note: "依托百度搜索生态，搜索截流为主"
+      ai_crawlers_blocked: []
+    publish:
+      method: "api"
+      endpoint: "百家号开放平台 Token 授权"
+      need_scan: false
+      note: "**新账号没有接口权限，需先手动发文养号**"
+      fallback: "浏览器自动化"
+    title:
+      min: 8
+      max: 30
+      must_have_entity_in_head: 12
+      confidence: medium
+    body:
+      min_chars: 800
+      require: ["关键词自然分布（每 400 字 1 次）", "结构化（小标题/列表）", "原文出处标注"]
+      forbid: ["二维码", "联系方式", "营销话术"]
+      confidence: medium
+    tags:
+      required: true
+      count: [1, 3]
+      confidence: low
+    extra:
+      intent: "搜索型：XX是什么 / XX怎么样 / XX多少钱"
+
+  # ────────────────────────────────────────────────
+  xiaohongshu:
+    name: "小红书"
+    priority: 4
+    status: "未接入（待账号）"
+    geo:
+      entries:
+        - {name: "小红书站内搜索（决策型）", confidence: medium}
+        - {name: "推荐流", confidence: medium}
+      recommend: true
+      recommend_note: "搜索 + 推荐双分发，长尾流量强（笔记几个月后仍持续来流量）"
+      ai_crawlers_blocked: []
+    publish:
+      method: "browser"          # 官方无内容发布 API（开放平台只有电商类目）
+      endpoint: "无官方内容发布接口"
+      need_scan: true
+      note: "只能半自动（填草稿人工确认）或浏览器自动化；**风控最敏感，风险最高**"
+    title:
+      min: 6
+      max: 20                  # 笔记标题显示很短
+      must_have_entity_in_head: 8
+      confidence: medium
+    body:
+      min_chars: 200
+      max_chars: 1000           # 笔记宜短
+      require: ["首图必须承载信息（标题大字）", "分点/emoji 排版", "结尾引导收藏"]
+      forbid: ["站外链接", "公众号二维码", "引流话术"]
+      confidence: medium
+    tags:
+      required: true
+      count: [6, 10]
+      note: "标签是主要曝光来源之一，要打满"
+      confidence: medium
+    extra:
+      intent: "决策型：XX推荐 / XX怎么选 / XX避坑 / XX平替"
+      note: "封面/首图权重极高，与图文长文是两个物种"
+
+  # ────────────────────────────────────────────────
+  weibo:
+    name: "新浪微博"
+    priority: 5
+    status: "未接入（待账号）"
+    geo:
+      entries:
+        - {name: "微博搜索", confidence: low}
+        - {name: "推荐流（首页第一标签页）", confidence: high,
+           note: "正观新闻报道：推荐流已提到 APP 首页首位，官方主动向中小创作者倾斜"}
+        - {name: "热搜 / 话题广场", confidence: high}
+      recommend: true
+      recommend_note: "「关注流 + 推荐流 + 热点流」三驾马车；转评赞即时反馈已贡献全平台 21% 流量"
+      ai_crawlers_blocked: []
+    publish:
+      method: "api"
+      endpoint: "statuses/update.json（OAuth2）/ 官方 weibo-cli"
+      need_scan: false
+      note: "**短微博可 API 自动发**；长文（头条文章）个人拿不到接口 —— 官方原文「第三方需要是政务、媒体、机构等实体，个人暂时无法接入」"
+      longform_alt: "私信 @媒体微博助理 走「授权接入」签合作协议（已有新华网/36氪/果壳等 100 家）"
+    title:
+      min: 0
+      max: 0                    # 微博无标题概念，正文首句即钩子
+      must_have_entity_in_head: 0
+      confidence: high
+    body:
+      min_chars: 0
+      max_chars: 140            # 图文微博正文建议 100~140 字
+      require: ["结论/数据钩子前置", "话题标签 #XX#", "引互动（提问/观点）"]
+      forbid: ["长文搬运", "纯链接无水词"]
+      confidence: medium
+    tags:
+      required: true
+      count: [1, 3]
+      note: "话题标签是微博的流量加速器"
+      confidence: medium
+    extra:
+      intent: "话题型：争议 / 反差 / 数据冲击"
+      risk: "⚠️ 待验证：微博对微信链接（mp.weixin.qq.com）是否限流"
