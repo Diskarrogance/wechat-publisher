@@ -42,9 +42,9 @@
 
 ---
 
-## 2. 定时任务架构（单任务五段串行）
+## 2. 定时任务架构（单任务六段串行）
 
-调度层为 **WorkBuddy Automations**（ACTIVE recurring），每天 **07:00** 启动，五段串行：
+调度层为 **WorkBuddy Automations**（ACTIVE recurring），每天 **07:00** 启动，六段串行：
 
 | 段 | 内容 | 典型耗时 |
 |----|------|---------|
@@ -53,6 +53,7 @@
 | 第三段 | 双号巡检：跑 `patrol_check.py` 判定，仅对需补发者补发 | 2~3 min |
 | 第四段 | 图片中间产物回收：`reap_images.py --days 7` | < 1 min |
 | 第五段 | 原创标识巡检：`copyright_check.py --count 4` | 1~2 min |
+| 第六段 | 多平台分发准备：`distribute/prepare.py --count 5`（已发表文章 → 跨平台素材包） | < 1 min |
 
 - 任务名：`公众号双号·每日发布+巡检(07:00)`，rrule `FREQ=DAILY;BYHOUR=7;BYMINUTE=0`
 - **段间隔离（硬规则）**：任一段失败只记录该段结果，**必须继续执行下一段**，禁止因前段出错中断整个任务
