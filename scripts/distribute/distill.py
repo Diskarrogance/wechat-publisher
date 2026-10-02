@@ -123,8 +123,9 @@ def read_article(path, title=None):
     return (title or ''), raw
 
 
-def extract(path, title=None):
-    t, html = read_article(path, title)
+def extract_html(html, title='', source='<inline>'):
+    """从 HTML 字符串提取素材（供 prepare.py 复用 —— 已发表文章的正文是字符串）"""
+    t = title or ''
     bs = blocks(html)
     body_text = '\n'.join(bs)
 
@@ -153,7 +154,7 @@ def extract(path, title=None):
     nums = [b for b in bs if re.search(r'\d', b) and 10 <= len(b) <= 80][:6]
 
     return {
-        'source': os.path.basename(path),
+        'source': source,
         'title': t,
         'title_len': len(t),
         'lead': lead,
@@ -165,6 +166,12 @@ def extract(path, title=None):
         'body_chars': len(re.sub(r'\s', '', body_text)),
         'paragraphs': len(bs),
     }
+
+
+def extract(path, title=None):
+    """文件入口：读 draft.json / html 后走 extract_html"""
+    t, html = read_article(path, title)
+    return extract_html(html, t, os.path.basename(path))
 
 
 def cmd_extract(m):
