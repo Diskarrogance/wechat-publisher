@@ -74,6 +74,38 @@ def check_content(content):
     return len(issues) == 0, issues
 
 
+# ────────────────────────────────────────────────────────────
+# 搜索友好度（搜一搜场景 · 2026-10-02 新增）
+#   背景：两号均为**服务号** —— 微信官方明确「推荐是订阅号的能力」，服务号不进推荐池，
+#   因此**搜一搜是唯一能自主争取的增量流量**。存量诊断（264+147 篇）：标题平均 27~29 字，
+#   85% 超过 22 字；结构普遍是「场景白描/悬念：结论」，前 12 字多为文学描写而非可搜索实体。
+#   本检查**只告警、不影响 exit code**（先收一段时间的数据再决定是否升级为硬关卡）。
+# ────────────────────────────────────────────────────────────
+HEAD_LEN = 12           # 前 N 字 = 搜索命中关键位
+LEN_TARGET_MAX = 26     # 标题长度目标上限
+CATEGORY_WORDS = [
+    'AI玩具', '陪伴机器人', '人形机器人', '机器人', '潮玩', '盲盒', '谷子', '手办', '模型',
+    'AI眼镜', '智能眼镜', '助听器', '耳机', '音箱', '芯片', '算力', '大模型', '具身智能',
+    '智能体', '掌机', '无人机', '毛绒', '挂件', '戒指', '投影', '相机', '眼镜', '玩具',
+    '平板', '手机', '电动车', '音箱', '机器人',
+]
+
+
+def search_friendliness(title):
+    """搜索友好度评估。返回 (ok, msgs)。msgs 只作告警，不参与 exit code。"""
+    msgs = []
+    head = title[:HEAD_LEN]
+    has_entity = bool(re.search(r'[A-Za-z][A-Za-z0-9\-]{1,}', head)) or \
+        any(w in head for w in CATEGORY_WORDS)
+    if not has_entity:
+        msgs.append(f"WARN[GEO-1]: 前 {HEAD_LEN} 字无「品牌名/品类词」实体 → 受搜一搜匹配率低"
+                    f"（实为：{head}）")
+    if len(title) > LEN_TARGET_MAX:
+        msgs.append(f"WARN[GEO-2]: 标题 {len(title)} 字 > 目标 {LEN_TARGET_MAX} 字"
+                    f"（搜索结果易截断，钩子请放在实体之后）")
+    return (not msgs), msgs
+
+
 def main():
     if len(sys.argv) < 2:
         print("用法: python validate_title.py <title> [content_file|@json:file]")
@@ -81,6 +113,7 @@ def main():
 
     title = sys.argv[1]
     passed, issues = check_title(title)
+    _sf_ok, sf_msgs = search_friendliness(title)
 
     if len(sys.argv) >= 3:
         path = sys.argv[2]
@@ -96,9 +129,11 @@ def main():
 
     for i in issues:
         print(i)
+    for m in sf_msgs:
+        print(m)          # 搜索友好度：仅告警
 
     if passed:
-        print(f"✅ 标题校验通过：{title[:30]}")
+        print(f"✅ 标题校验通过：{title[:30]}" + ("" if _sf_ok else "（含搜索友好度告警）"))
         sys.exit(0)
     print(f"❌ 校验未通过，共 {len(issues)} 项失败")
     sys.exit(1)
