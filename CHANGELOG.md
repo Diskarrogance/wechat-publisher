@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 > 注：v2.6.0 – v2.10.1 的变更未逐条补录（详见 git log）。本文件从 v2.11.0 起恢复维护。
 
+## [v2.18.0] - 2026-10-02
+
+> 主题：**原创标识自动巡检**。「能不能自动选原创」查证后结论是 —— 微信 API 既不能声明、
+> 也读不到标记，但**抓文章页面可以判断**。据此做了自动化兜底。
+
+### Added
+- **`copyright_check.py`** — 原创标识巡检
+  - 双号（或指定账号）拉最近 N 篇已发表文章，逐篇抓页面判断有无
+    `<span id="copyright_logo" ...>原创</span>`
+  - 增量读取（命中 `copyright_logo` 即停止读取），单篇上限 4 MB
+  - 参数：`--account`（key/中文名/all）/ `--count`（默认 3）/ `--json` / `--quiet`
+  - 退出码：0 全标 · 1 有未标（列出清单 + 处置指引）· 2 接口/网络异常 · 3 脚本错误
+
+### Changed
+- 调度任务加**第五段**：`copyright_check.py --count 4`，发现未标即在 `daily` 日志醒目列出
+
+### Investigated（结论留档）
+- 官方社区置顶答复：`draft/add` / `freepublish/submit` **无原创相关参数**（「不支持」）
+- 实测 `freepublish/batchget`：`news_item` 仅 12 字段，**不含 `copyright_stat`**
+- 实测页面判据可靠：09-15 及更早文章无该元素；09-30 起两号文章均有
+- **正解在后台**：MP 后台 → 内容与互动 → 原创声明 → **「发布时自动声明原创」** 开关
+- ⚠️ 原创标识**不支持事后补标**，漏了只能删文重新群发
+
 ## [v2.17.0] - 2026-09-30
 
 > 主题：**让每篇都能勾原创**。原先「可检索化」只写在文档里，无代码约束 → 要素漏做无人拦。
