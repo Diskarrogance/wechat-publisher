@@ -659,6 +659,8 @@ UTF-8 字节被当 Latin-1 存进微信 → 中文乱码。**根治方案已固�
 ├── CHANGELOG.md
 ├── README.md
 ├── config\accounts.yaml
+├── config\keywords.yaml               ← 搜索词库（标题选词真源）
+├── config\platforms.yaml              ← 多平台能力矩阵 + GEO 规则（分发模块真源）
 └── scripts\
     ├── _rules.py                     ← ★ 内容安全词表唯一真源
     ├── semaphore_check.py            ← 第〇步防重复硬屏障（三层）
@@ -676,7 +678,15 @@ UTF-8 字节被当 Latin-1 存进微信 → 中文乱码。**根治方案已固�
     ├── reap_images.py                ← 图片中间产物回收（第四段）
     ├── copyright_check.py            ← 原创标识巡检（第五段）
     ├── create_draft.py               ← 建稿（内置全部关卡双保险）
-    └── delete_draft.py               ← 撤稿（主题撞车时用，--purge-history 连带清 history 占位）
+    ├── delete_draft.py               ← 撤稿（主题撞车时用，--purge-history 连带清 history 占位）
+    └── distribute\                   ← ★ 多平台分发模块（GEO 主轴 · 2026-10-02）
+        ├── geo_adapt.py              ← 平台适配校验：list / matrix / check / guide
+        └── distill.py                ← 母稿蒸馏 + 改造任务书：extract / brief
+
+**多平台分发模块**（详细规则见 `config/platforms.yaml` 头部）：设计主轴是 **GEO —— 每加一个
+平台 = 补一个搜索/推荐入口**，不是「多发几个平台」。工作流：
+`distill.py brief <平台> <母稿>` 生成任务书 → 执行会话按任务书改造 → `geo_adapt.py check <平台> …` 自检。
+优先级：公众号(已打通) → 头条号 → 百家号 → 小红书 → 微博。
 
 <qclaw_home>\
 ├── secure\.env_junxun / .env_lanmuda  ← 凭证
