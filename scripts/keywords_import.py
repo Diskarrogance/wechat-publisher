@@ -16,9 +16,19 @@ keywords_import.py — 外部搜索热词导入 + 缺口分析
   -     从 stdin 读（配合管道）
 
 【用法】
+  # 手动导入
   python keywords_import.py words.csv --platform 微信搜一搜 [--source "..."] [--dry-run]
-  python keywords_import.py words.txt --platform 今日头条
   cat w.csv | python keywords_import.py - --platform 小红书 --dry-run
+
+  # 从接口 / 下载链接直接拉（★ 每天更新用这个）
+  python keywords_import.py --url "https://.../hotwords.json" --platform 微信搜一搜 --replace
+  python keywords_import.py --url "..." -H "Authorization: Bearer xxx" --platform 小红书 --replace
+
+【合并 vs 替换 —— 别选错】
+  默认「合并」：已有词保留，同词 reads 取较大值。适合零星补充。
+  --replace   ：丢弃该平台已有词，只留本次导入。
+  ⚠️ **接口每天给全量词表时，必须加 --replace** —— 否则过期词永久残留、
+     reads 只增不减（若是「最近 30 天」这类时间窗数据，不替换就等于数据一直错下去）。
 
 exit: 0=成功  2=参数/文件错误  3=解析或写入异常
 """
@@ -114,30 +124,44 @@ def parse_text(text):
     return out
 
 
-def parse_any(path):
-    """返回 [(word, reads, source)]"""
-    if path == '-':
-        text = sys.stdin.read()
-    else:
-        if not os.path.exists(path):
-            raise FileNotFoundError(path)
-        with open(path, encoding='utf-8-sig') as f:
-            text = f.read()
+def fetch_text(url, headers=None):
+    """从 URL 拉文本。返回 (text, content_type)。"""
+    import urllib.request, ssl
+    req = urllib.request.Request(url)
+    req.add_header('User-Agent', 'Mozilla/5.0 (compatible; wechat-publisher)')
+    for k, v in (headers or {}).items():
+        req.add_header(k, v)
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
+        raw = r.read()
+        ct = r.headers.get('Content-Type', '') or ''
+    for enc in ('utf-8-sig', 'utf-8', 'gbk'):
+        try:
+            return raw.decode(enc), ct
+        except UnicodeDecodeError:
+            continue
+    return raw.decode('utf-8', 'replace'), ct
 
-    ext = '' if path == '-' else os.path.splitext(path)[1].lower()
+
+def parse_text_by_ext(text, ext=''):
+    """按扩展名（或内容特征）判格式并解析。返回 [(word, reads, source)]"""
+    ext = (ext or '').lower()
     if ext == '.json':
         d = json.loads(text)
-        items = d if isinstance(d, list) else (d.get('words') or [])
+        items = d if isinstance(d, list) else (d.get('words') or d.get('data') or d.get('list') or [])
         out = []
         for it in items:
             if isinstance(it, dict):
-                out.append((str(it.get('word', '')).strip(), _to_int(it.get('reads')), str(it.get('source', ''))))
+                w = it.get('word') or it.get('keyword') or it.get('query') or it.get('name') or ''
+                rd = it.get('reads') or it.get('read') or it.get('count') or it.get('num') or 0
+                out.append((str(w).strip(), _to_int(rd), str(it.get('source', ''))))
             else:
                 out.append((str(it).strip(), 0, ''))
         return [x for x in out if x[0]]
     if ext == '.csv':
         return parse_csv(text)
-    # txt / 未知 / stdin：首行有逗号就按 CSV 试（可能是无后缀导出），否则按逐行
     first_line = text.splitlines()[0] if text.splitlines() else ''
     if ',' in first_line:
         got = parse_csv(text)
@@ -146,14 +170,50 @@ def parse_any(path):
     return parse_text(text)
 
 
-def merge_platform(existing_platform, items, source):
-    """把 items 并入某平台的 words。返回 (新 dict, 新增数, 更新数)"""
-    cur = {}
+def parse_any(path):
+    """从文件 / stdin 解析。返回 [(word, reads, source)]"""
+    if path == '-':
+        text, ext = sys.stdin.read(), ''
+    else:
+        if not os.path.exists(path):
+            raise FileNotFoundError(path)
+        with open(path, encoding='utf-8-sig') as f:
+            text = f.read()
+        ext = os.path.splitext(path)[1].lower()
+    return parse_text_by_ext(text, ext)
+
+
+def parse_headers(pairs):
+    """['A: 1', 'B: 2'] → {'A': '1', 'B': '2'}"""
+    out = {}
+    for p in pairs or []:
+        if ':' in p:
+            k, v = p.split(':', 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+def merge_platform(existing_platform, items, source, replace=False):
+    """把 items 并入某平台的 words。
+
+    replace=False（默认）：**合并** —— 已有词保留，同词 reads 取较大值。适合零星补充。
+    replace=True         ：**替换** —— 丢弃该平台已有词，只留本次导入。适合「每天全量更新」，
+                           否则过期词会永久残留、reads 只增不减（时间窗数据尤其致命）。
+    返回 (node, new_cnt, upd_cnt, removed)
+    """
+    old_words = set()
     for it in (existing_platform or {}).get('words') or []:
-        if isinstance(it, dict) and it.get('word'):
-            cur[str(it['word'])] = _to_int(it.get('reads'))
-        elif isinstance(it, str):
-            cur[it] = 0
+        w = it.get('word') if isinstance(it, dict) else it
+        if w:
+            old_words.add(str(w))
+
+    cur = {}
+    if not replace:
+        for it in (existing_platform or {}).get('words') or []:
+            if isinstance(it, dict) and it.get('word'):
+                cur[str(it['word'])] = _to_int(it.get('reads'))
+            elif isinstance(it, str):
+                cur[it] = 0
 
     new_cnt = upd_cnt = 0
     for w, rd, sc in items:
@@ -165,17 +225,19 @@ def merge_platform(existing_platform, items, source):
             cur[w] = rd
             new_cnt += 1
 
-    # 排序：有数据的按 reads 降序在前，无数据按原始顺序在后
+    removed = len(old_words - set(cur.keys())) if replace else 0
+
     ordered = sorted(cur.items(), key=lambda kv: (-kv[1],))
     words = [{'word': w, 'reads': n} for w, n in ordered]
 
     node = {
         'source': source or (existing_platform or {}).get('source', '') or '（未标注来源）',
         'updated': datetime.date.today().isoformat(),
+        'mode': 'replace' if replace else 'merge',
         'count': len(words),
         'words': words,
     }
-    return node, new_cnt, upd_cnt
+    return node, new_cnt, upd_cnt, removed
 
 
 def gap_analysis(search_words):
@@ -197,20 +259,38 @@ def gap_analysis(search_words):
 
 def main():
     ap = argparse.ArgumentParser(add_help=True)
-    ap.add_argument('file', help='输入文件（.csv/.txt/.json）或 - 表示 stdin')
+    ap.add_argument('file', nargs='?', help='输入文件（.csv/.txt/.json）或 - 表示 stdin')
+    ap.add_argument('--url', default='', help='直接从 URL 拉取（接口 / 下载链接），与 file 二选一')
+    ap.add_argument('-H', '--header', action='append', default=[],
+                    help='附加请求头，如 -H "Authorization: Bearer xxx"（可重复）')
     ap.add_argument('--platform', required=True, help='平台名，如「微信搜一搜」「今日头条」')
     ap.add_argument('--source', default='', help='数据来源说明（写入文件备注）')
+    ap.add_argument('--replace', action='store_true',
+                    help='替换该平台已有词（**每天全量更新必须用**；不加则累加合并，旧词会残留）')
     ap.add_argument('--dry-run', action='store_true', help='只预览，不写文件')
     args = ap.parse_args()
 
+    if not args.file and not args.url:
+        print('[ERROR] 需要 file 位置参数或 --url 之一', file=sys.stderr)
+        return 2
+
     try:
-        items = parse_any(args.file)
+        if args.url:
+            text, ct = fetch_text(args.url, parse_headers(args.header))
+            ct = ct.lower()
+            ext = '.json' if 'json' in ct else ('.csv' if 'csv' in ct else '')
+            if not ext:
+                from urllib.parse import urlparse
+                ext = os.path.splitext(urlparse(args.url).path)[1].lower()
+            items = parse_text_by_ext(text, ext)
+        else:
+            items = parse_any(args.file)
     except Exception as e:
         print(f'[FATAL] 读取/解析失败：{type(e).__name__}: {e}', file=sys.stderr)
         return 3
 
     if not items:
-        print('[ERROR] 未解析出任何词 —— 检查文件格式（CSV 需 word 列；TXT 每行一个词）', file=sys.stderr)
+        print('[ERROR] 未解析出任何词 —— 检查格式（CSV 需可识别的词列；TXT 每行一个词）', file=sys.stderr)
         return 2
 
     try:
@@ -221,15 +301,17 @@ def main():
 
     doc.setdefault('version', 1)
     plats = doc.setdefault('platforms', {})
-    node, new_cnt, upd_cnt = merge_platform(plats.get(args.platform), items, args.source)
+    node, new_cnt, upd_cnt, removed = merge_platform(
+        plats.get(args.platform), items, args.source, replace=args.replace)
     plats[args.platform] = node
-    doc['updated'] = __import__('datetime').date.today().isoformat()
+    doc['updated'] = datetime.date.today().isoformat()
 
-    print(f'[[导入报告]]')
+    print('[[导入报告]]')
     print(f'  平台      : {args.platform}')
     print(f'  来源      : {node["source"]}')
+    print(f'  模式      : {"替换（全量更新）" if args.replace else "合并（累加）"}')
     print(f'  解析词数  : {len(items)}')
-    print(f'  新增 {new_cnt} · 更新 {upd_cnt} · 平台累计 {node["count"]}')
+    print(f'  新增 {new_cnt} · 更新 {upd_cnt} · 移除 {removed} · 平台累计 {node["count"]}')
 
     ours, gaps = gap_analysis([w for w, _, _ in items])
     if gaps:

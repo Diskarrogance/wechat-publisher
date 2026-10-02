@@ -396,8 +396,12 @@ C:/Python312/python.exe scripts/geoready_check.py "<html文件>" --account <key>
 4. **选词依据 = 两个词库文件**（分工不同，勿混）：
    - `config/keywords.yaml` —— **自有实体词**（品类词 + 品牌词），由 `history.db` 411 篇标题
      自动提取，回答「**我们写过什么**」；稳定，手写维护。
-   - `config/search_terms.yaml` —— **外部真实搜索词**（各平台后台导出），按平台分节，
-     回答「**用户搜什么**」；用 `scripts/keywords_import.py` 导入，可反复覆盖更新。
+   - `config/search_terms.yaml` —— **外部真实搜索词**（各平台接口 / 后台导出），按平台分节，
+     回答「**用户搜什么**」；用 `scripts/keywords_import.py` 导入，可反复更新。
+     · 手动：`keywords_import.py <文件.csv|.txt|.json|-> --platform "微信搜一搜"`
+     · 接口：`keywords_import.py --url "<接口地址>" --platform "..." --replace`
+       （需鉴权加 `-H "Authorization: ..."`；格式自适应 CSV/JSON/TXT）
+     ⚠️ **接口每天给全量词表时必须加 `--replace`** —— 否则过期词永久残留、reads 只增不减
    `validate_title.py` 同时读这两个文件 —— **改词只改这两个，不许在脚本里再抄一份**。
    导入时脚本自动输出「**缺口分析**」：用户搜、但我们实体词表里没有的词 = **机会点**。
 5. **自检**：念给一个没看过文章的人，问他「想搜这条新闻会打什么字」—— 那个词不在前 12 字里，就重写
