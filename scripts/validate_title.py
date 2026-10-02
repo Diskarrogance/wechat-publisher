@@ -93,43 +93,78 @@ _FALLBACK_KEYWORDS = [
     '平板', '手机', '泡泡玛特', 'LABUBU',
 ]
 CATEGORY_WORDS = _FALLBACK_KEYWORDS      # 兼容旧引用
-_KEYWORD_CACHE = None
+_KEYWORD_CACHE = {}                      # {platform_key: [words]} —— 按平台分开缓存
+
+CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config')
+KEYWORDS_YAML = os.path.join(CONFIG_DIR, 'keywords.yaml')
+SEARCH_YAML = os.path.join(CONFIG_DIR, 'search_terms.yaml')
 
 
-def _load_keywords():
-    """从 config/keywords.yaml 读搜索词库（唯一真源）。失败回落内置副本。"""
-    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                     'config', 'keywords.yaml')
+def _read_yaml(p):
+    import yaml
+    if not os.path.exists(p):
+        return {}
+    with open(p, encoding='utf-8') as f:
+        return yaml.safe_load(f) or {}
+
+
+def _load_keywords(platform=None):
+    """词库 = 自有实体词（keywords.yaml）+ 外部真实搜索词（search_terms.yaml）。
+
+    platform 为空 → 合并全部平台的外部词；指定平台 → 只用该平台的（+自有词）。
+    任一文件缺失都不静默放行；只有全部为空才回落内置副本并告警。
+    """
+    words = []
     try:
-        import yaml
-        with open(p, encoding='utf-8') as f:
-            d = yaml.safe_load(f) or {}
-        words = []
+        d = _read_yaml(KEYWORDS_YAML)
         for section in ('category', 'brand', 'search_terms'):
             for item in (d.get(section) or []):
                 if isinstance(item, dict) and item.get('word'):
                     words.append(str(item['word']))
-        if words:
-            return words
-        print('[WARN] keywords.yaml 为空，回落内置词表', file=sys.stderr)
+                elif isinstance(item, str):
+                    words.append(item)
     except Exception as e:
-        print(f'[WARN] 读取 keywords.yaml 失败（{type(e).__name__}: {e}），回落内置词表', file=sys.stderr)
+        print(f'[WARN] 读取 keywords.yaml 失败（{type(e).__name__}: {e}）', file=sys.stderr)
+
+    try:
+        sd = _read_yaml(SEARCH_YAML)
+        plats = sd.get('platforms') or {}
+        picked = [plats[platform]] if (platform and platform in plats) else list(plats.values())
+        for node in picked:
+            for item in ((node or {}).get('words') or []):
+                w = item.get('word') if isinstance(item, dict) else item
+                if w:
+                    words.append(str(w))
+    except Exception as e:
+        print(f'[WARN] 读取 search_terms.yaml 失败（{type(e).__name__}: {e}）', file=sys.stderr)
+
+    if words:
+        seen, out = set(), []
+        for w in words:
+            if w not in seen:
+                seen.add(w)
+                out.append(w)
+        return out
+    print('[WARN] 词库为空，回落内置副本', file=sys.stderr)
     return _FALLBACK_KEYWORDS
 
 
-def _keywords():
-    global _KEYWORD_CACHE
-    if _KEYWORD_CACHE is None:
-        _KEYWORD_CACHE = _load_keywords()
-    return _KEYWORD_CACHE
+def _keywords(platform=None):
+    key = platform or '__all__'
+    if key not in _KEYWORD_CACHE:
+        _KEYWORD_CACHE[key] = _load_keywords(platform)
+    return _KEYWORD_CACHE[key]
 
 
-def search_friendliness(title):
-    """搜索友好度评估。返回 (ok, msgs)。msgs 只作告警，不参与 exit code。"""
+def search_friendliness(title, platform=None):
+    """搜索友好度评估。返回 (ok, msgs)。msgs 只作告警，不参与 exit code。
+
+    platform 可选 —— 指定后只用该平台的搜索词判实体命中（如「微信搜一搜」）。
+    """
     msgs = []
     head = title[:HEAD_LEN]
     has_entity = bool(re.search(r'[A-Za-z][A-Za-z0-9\-]{1,}', head)) or \
-        any(w in head for w in _keywords())
+        any(w in head for w in _keywords(platform))
     if not has_entity:
         msgs.append(f"WARN[GEO-1]: 前 {HEAD_LEN} 字无「品牌名/品类词」实体 → 受搜一搜匹配率低"
                     f"（实为：{head}）")
@@ -140,16 +175,23 @@ def search_friendliness(title):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("用法: python validate_title.py <title> [content_file|@json:file]")
+    argv = sys.argv[1:]
+    platform = None
+    if '--platform' in argv:
+        _i = argv.index('--platform')
+        platform = argv[_i + 1] if _i + 1 < len(argv) else None
+        del argv[_i:_i + 2]
+
+    if not argv:
+        print("用法: python validate_title.py <title> [content_file|@json:file] [--platform 微信搜一搜]")
         sys.exit(2)
 
-    title = sys.argv[1]
+    title = argv[0]
     passed, issues = check_title(title)
-    _sf_ok, sf_msgs = search_friendliness(title)
+    _sf_ok, sf_msgs = search_friendliness(title, platform)
 
-    if len(sys.argv) >= 3:
-        path = sys.argv[2]
+    if len(argv) >= 2:
+        path = argv[1]
         if path.startswith('@json:'):
             with open(path[6:], 'r', encoding='utf-8') as f:
                 content = json.load(f).get('content', '')
