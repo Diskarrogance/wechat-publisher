@@ -177,18 +177,25 @@ def search_friendliness(title, platform=None):
 def main():
     argv = sys.argv[1:]
     platform = None
+    geo_warn_only = '--geo-warn-only' in argv
+    argv = [a for a in argv if a != '--geo-warn-only']
     if '--platform' in argv:
         _i = argv.index('--platform')
         platform = argv[_i + 1] if _i + 1 < len(argv) else None
         del argv[_i:_i + 2]
 
     if not argv:
-        print("用法: python validate_title.py <title> [content_file|@json:file] [--platform 微信搜一搜]")
+        print("用法: python validate_title.py <title> [content_file|@json:file] "
+              "[--platform 微信搜一搜] [--geo-warn-only]")
         sys.exit(2)
 
     title = argv[0]
     passed, issues = check_title(title)
     _sf_ok, sf_msgs = search_friendliness(title, platform)
+    # 搜索友好度自 v2.20.0 起计入失败（硬关卡）。--geo-warn-only 为逃生阀，供临时放宽。
+    geo_fail = (not _sf_ok) and (not geo_warn_only)
+    if geo_fail:
+        passed = False
 
     if len(argv) >= 2:
         path = argv[1]
@@ -205,12 +212,12 @@ def main():
     for i in issues:
         print(i)
     for m in sf_msgs:
-        print(m)          # 搜索友好度：仅告警
+        print(m + ("" if geo_warn_only else "   ← 计入失败"))
 
     if passed:
-        print(f"✅ 标题校验通过：{title[:30]}" + ("" if _sf_ok else "（含搜索友好度告警）"))
+        print(f"✅ 标题校验通过：{title[:30]}" + ("" if _sf_ok else "（搜索友好度仅告警）"))
         sys.exit(0)
-    print(f"❌ 校验未通过，共 {len(issues)} 项失败")
+    print(f"❌ 校验未通过，共 {len(issues) + (1 if geo_fail else 0)} 项失败")
     sys.exit(1)
 
 

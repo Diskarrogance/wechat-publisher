@@ -170,6 +170,24 @@ def run_preflight(acct_key, title, content, source_file=None):
         print(f"TITLE_VALIDATE_FAIL: 标题长度 {len(title)} > 64，禁止创建草稿")
         return 1
 
+    # ── 1b. 标题搜索友好度（2026-10-02 起为硬关卡）──
+    # 依据：两号均为服务号，微信官方明确「推荐是订阅号的能力」→ 推荐恒为 0，
+    # 搜一搜是唯一能自主争取的增量流量。故标题前 12 字必须含可搜索实体（品牌/产品/品类词），
+    # 且不超过 26 字（搜索结果会截断）。规则见 SKILL.md §6.1-C，
+    # 词库见 config/keywords.yaml + config/search_terms.yaml。
+    try:
+        import validate_title as _vt
+        _sf_ok, _sf_msgs = _vt.search_friendliness(title, '微信搜一搜')
+        if not _sf_ok:
+            print("TITLE_GEO_FAIL: 标题不符合搜索友好规则，禁止创建草稿")
+            for _m in _sf_msgs:
+                print(f"  ✗ {_m}")
+            print("处置：把「品牌名/产品名/品类词」提到前 12 字、标题压到 26 字以内，再重交")
+            return 1
+    except Exception as _ve:
+        print(f"[WARN] validate_title 不可用（{type(_ve).__name__}: {_ve}），"
+              f"降级跳过标题搜索友好度检查", file=sys.stderr)
+
     try:
         import compliance_check as _cc
         _fails, _warns, _stats = _cc.check(title, content)
