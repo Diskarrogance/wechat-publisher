@@ -26,8 +26,13 @@ filter_candidates.py - 候选文章 URL 过滤（v2.10.1 新增）
 import sys, os, json, sqlite3, datetime
 from urllib.parse import urlparse, urlunparse
 
-sys.stdout = __import__('io').TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = __import__('io').TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+# UTF-8 输出。用 reconfigure 而不是替换 sys.stdout 对象 ——
+# 替换会让被 import 时的调用方 buffer 被 GC 关闭（ValueError: I/O operation on closed file）
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 URL_LOOKBACK_DAYS = 7
 CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "accounts.yaml")

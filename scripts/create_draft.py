@@ -155,12 +155,25 @@ def normalize_key(account):
     return (a or {}).get('key') or account
 
 
-def run_preflight(acct_key, title, content, source_file=None):
+def run_preflight(acct_key, title, content, source_file=None, materials=None, skip_embed=False):
     """建稿前硬关卡。返回 exit_code（0=通过，1=拒绝）或 None（校验异常，不阻断）
+
+    关卡清单：
+      1  标题长度 ≤64
+      1b 标题搜索友好度（GEO-1/GEO-2）
+      2  内容合规（compliance_check）
+      3  裸 URL
+      4  配图数量
+      5  君寻企业群二维码
+      6  岚牧哒中文占比
+      7  GEO 就绪度 / 原创可声明性（geoready_check）
+      8  原创率（originality_rate，需 materials）
+      9  品牌植入（brand_embed，可 skip_embed 跳过）
 
     防御性归一化：调用方可能传中文名「君寻」，不归一化会导致
     君寻二维码检查被静默跳过（2026-09-27/09-29 踩过两次同类 bug）。
     """
+    materials = materials or []
     import re as _re
     acct_key = normalize_key(acct_key)
     has_qr = ('粉丝群' in content) and ('mmecoa' in content)
@@ -264,11 +277,83 @@ def run_preflight(acct_key, title, content, source_file=None):
         print(f"[WARN] geoready_check 不可用（{type(_ge).__name__}: {_ge}），"
               f"降级跳过 GEO 就绪度检查", file=sys.stderr)
 
+    # ── 8. 原创率（多素材池覆盖度，2026-10-16 新增）──
+    # 与关卡 7 的 geoready_check 分工不同：那个查「与单篇源文的相似度」，
+    # 这个算「有多少字是自己写的」（覆盖度口径）。素材由 --materials 传入。
+    if materials:
+        try:
+            import subprocess as _sp
+            _cmd = [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                 'originality_rate.py'), '-', '--quiet']
+            # 走临时文件更稳（HTML 可能很大）
+            _tmp = os.path.join(os.environ.get('TEMP', '.'), '_cd_rate_%d.html' % os.getpid())
+            with open(_tmp, 'w', encoding='utf-8') as _f:
+                _f.write(content)
+            _cmd[2] = _tmp
+            _cmd += ['--materials'] + list(materials)
+            _p = _sp.run(_cmd, capture_output=True, text=True, encoding='utf-8', timeout=120)
+            try:
+                os.remove(_tmp)
+            except OSError:
+                pass
+            _out = (_p.stdout or '') + (_p.stderr or '')
+            if _p.returncode == 1:
+                print("ORIGINALITY_RATE_FAIL: 原创率未达标，禁止创建草稿")
+                for _ln in _out.splitlines():
+                    if _ln.strip().startswith(('裁定', '  处置')):
+                        print(f"  {_ln.strip()}")
+                print("处置：与素材重复的段落逐段重写 —— 事实数字可留，包着它的句子必须重构")
+                return 1
+            elif _p.returncode == 2:
+                print(f"[WARN] 原创率无法检测（素材为空/外文源），跳过", file=sys.stderr)
+            else:
+                for _ln in _out.splitlines():
+                    if '原 创 率' in _ln:
+                        print(f"  {_ln.strip()}")
+        except Exception as _oe:
+            print(f"[WARN] originality_rate 执行异常（{type(_oe).__name__}: {_oe}），"
+                  f"降级跳过原创率检查", file=sys.stderr)
+
+    # ── 9. 品牌植入（可检索性 × 低可感知度，2026-10-16 新增）──
+    # 目标：AI 检索得到（品牌 × 品类锚点共现、落黄金位），读者看不出来（无推销句式）。
+    # 规则见 SKILL.md §6.4，品牌资料见 config/brand.yaml。--skip-embed 为逃生阀。
+    if not skip_embed:
+        try:
+            import brand_embed as _be
+            _tmp2 = os.path.join(os.environ.get('TEMP', '.'), '_cd_embed_%d.html' % os.getpid())
+            with open(_tmp2, 'w', encoding='utf-8') as _f:
+                _f.write(content)
+            _br, _berr = _be.check(_tmp2, acct_key)
+            try:
+                os.remove(_tmp2)
+            except OSError:
+                pass
+            if _br is None:
+                print(f"[WARN] 品牌植入检查跳过：{_berr}")
+            elif _br['verdict'] == 'BLOCK':
+                print("BRAND_EMBED_FAIL: 品牌植入不合格，禁止创建草稿")
+                for _f in _br['retrieve_fails'] + _br['sell_fails']:
+                    print(f"  ✗ {_f}")
+                print("处置：可检索性不足 → 在结论句/数据段/FAQ 自然带出品类锚点词；"
+                      "可感知度过高 → 删掉推销句式（见 SKILL.md §6.4）")
+                return 1
+            else:
+                for _w in _br['retrieve_warns'] + _br['sell_warns']:
+                    print(f"  ⚠ {_w}")
+                print(f"  品牌植入: {_br['verdict']}（锚点 {_br['anchor_total']} 次 / "
+                      f"共现 {_br['cooccurrence']} 处 / 黄金位 {len(_br['golden_slots'])} 处）")
+        except Exception as _be_e:
+            print(f"[WARN] brand_embed 不可用（{type(_be_e).__name__}: {_be_e}），"
+                  f"降级跳过品牌植入检查", file=sys.stderr)
+
     return 0
 
 
 def main():
-    # 可选参数剥离：--source-file <路径>（供 GEO 就绪度关卡做源文相似度比对）
+    # 可选参数剥离：
+    #   --source-file <路径>     供 GEO 就绪度关卡做源文相似度比对
+    #   --materials <路径...>    素材池，供原创率关卡（originality_rate）计算覆盖度
+    #   --skip-embed             跳过品牌植入关卡（逃生阀，纯行业文场景用）
     _argv = list(sys.argv[1:])
     source_file = None
     if '--source-file' in _argv:
@@ -279,8 +364,22 @@ def main():
         else:
             del _argv[_i]
 
+    materials = []
+    if '--materials' in _argv:
+        _i = _argv.index('--materials')
+        _j = _i + 1
+        while _j < len(_argv) and not _argv[_j].startswith('--'):
+            materials.append(_argv[_j])
+            _j += 1
+        del _argv[_i:_j]
+
+    skip_embed = '--skip-embed' in _argv
+    if skip_embed:
+        _argv.remove('--skip-embed')
+
     if len(_argv) < 1:
-        print("用法: python create_draft.py <account> [draft_json|@file] [--source-file <源文>]",
+        print("用法: python create_draft.py <account> [draft_json|@file] "
+              "[--source-file <源文>] [--materials <素材...>] [--skip-embed]",
               file=sys.stderr)
         sys.exit(2)
 
@@ -319,9 +418,11 @@ def main():
         draft_info['author'] = acct_cfg.get('author', '')
 
     # 🚨 建稿前硬关卡（详见模块 docstring）
+    # materials 回落顺序：命令行 --materials > draft.json 的 materials 字段
+    _mats = materials or (draft_info.get('materials') or [])
     try:
         _code = run_preflight(acct_key, draft_info.get('title', ''), draft_info.get('content', ''),
-                              source_file=source_file)
+                              source_file=source_file, materials=_mats, skip_embed=skip_embed)
         if _code:
             sys.exit(_code)
     except Exception as _e:
